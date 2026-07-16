@@ -96,7 +96,7 @@ class RunnerTests(unittest.TestCase):
             ("raise ValueError('x')", None),
             ("import sys; sys.exit(0)", None),
             ("while True: pass", Bridge(cancelled=True)),
-            ("while True: pass", Bridge(fail=True)),
+            ("for _ in range(200):\n    pass", Bridge(fail=True)),
         ]
         for source, bridge in cases:
             with self.subTest(source=source, bridge=type(bridge).__name__):
@@ -111,6 +111,17 @@ class RunnerTests(unittest.TestCase):
                 self.assertIs(input_function, builtins.input)
                 self.assertIs(access_function, os.access)
                 self.assertIs(trace_function, sys.gettrace())
+
+    def test_cancel_check_failure_has_clear_internal_diagnostic(self):
+        result = self.execute(
+            "for _ in range(200):\n    pass\nraise ValueError('script failure')",
+            bridge=Bridge(fail=True),
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual("ValueError", result["error_type"])
+        self.assertIn("script failure", result["output"])
+        self.assertIn("DIAGNÓSTICO INTERNO DEL PUENTE", result["output"])
+        self.assertIn("bridge failure", result["output"])
 
     def test_local_module_is_reloaded_but_external_module_is_preserved(self):
         module = Path(self.temp.name) / "utilidades.py"

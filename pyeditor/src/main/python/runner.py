@@ -144,9 +144,11 @@ def execute(
     }
     deadline = time.monotonic() + max(5, int(timeout_seconds))
     trace_events = 0
+    cancel_checks_available = True
+    bridge_diagnostic = ""
 
     def trace_execution(frame, event, arg):
-        nonlocal trace_events
+        nonlocal trace_events, cancel_checks_available, bridge_diagnostic
         trace_events += 1
         if trace_events % 100:
             if (
@@ -162,8 +164,18 @@ def execute(
                 }
                 debug_trace.append(f"L{frame.f_lineno}  {visible}")
             return trace_execution
-        if input_bridge is not None and input_bridge.isCancelled():
-            raise PixelPyStopped("Ejecución detenida por el usuario")
+        if input_bridge is not None and cancel_checks_available:
+            try:
+                cancelled = input_bridge.isCancelled()
+            except BaseException as error:
+                bridge_diagnostic = (
+                    "No se pudo consultar la cancelación del puente "
+                    f"({type(error).__name__}: {error})"
+                )
+                cancel_checks_available = False
+                cancelled = False
+            if cancelled:
+                raise PixelPyStopped("Ejecución detenida por el usuario")
         if time.monotonic() > deadline:
             raise PixelPyStopped(
                 f"La ejecución superó el límite de {timeout_seconds} segundos"
@@ -211,6 +223,19 @@ def execute(
         os.chdir(old_cwd)
         sys.path[:] = old_path
         sys.settrace(old_trace)
+
+    if bridge_diagnostic:
+        output.write(f"\n■ DIAGNÓSTICO INTERNO DEL PUENTE: {bridge_diagnostic}.\n")
+        if ok:
+            ok = False
+            details.update(
+                {
+                    "error_file": safe_filename,
+                    "error_line": 0,
+                    "error_type": "PixelPyBridgeError",
+                    "error_message": bridge_diagnostic,
+                }
+            )
 
     for path in work.rglob("*"):
         if path.is_file() and path.suffix != ".py":
