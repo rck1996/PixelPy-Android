@@ -26,9 +26,7 @@ internal class EditorAutosaveCoordinator(
     private val scope: CoroutineScope,
     private val debounceMillis: Long = 650,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
-    private val writer: FileContentWriter = FileContentWriter { file, content ->
-        file.writeText(content)
-    },
+    private val writer: FileContentWriter = AtomicFileContentWriter,
 ) {
     private data class PendingSave(
         val file: File,
@@ -81,9 +79,15 @@ internal class EditorAutosaveCoordinator(
             if (file == null) pending.keys.toList() else listOf(file.safePath())
         }
         paths.forEach { path ->
-            val job = synchronized(stateLock) { jobs.remove(path) }
-            job?.cancelAndJoin()
-            saveLatest(path)
+            while (true) {
+                val job = synchronized(stateLock) { jobs.remove(path) }
+                job?.cancelAndJoin()
+                saveLatest(path)
+                val retryNewerVersion = synchronized(stateLock) {
+                    pending[path] != null && _states.value[path] != SaveStatus.Error
+                }
+                if (!retryNewerVersion) break
+            }
         }
     }
 

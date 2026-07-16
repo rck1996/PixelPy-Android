@@ -121,6 +121,67 @@ class SessionRecoveryTest {
         composeRule.onNodeWithTag("editor-input").assertTextContains(edited)
     }
 
+    @Test
+    fun rapidFileSelectionEndsOnLastTappedFile() {
+        prepareProject(
+            "Phase2RapidFiles",
+            mapOf("a.py" to "A", "b.py" to "B", "c.py" to "C"),
+            "a.py",
+        )
+
+        composeRule.onNodeWithTag("editor-file-b.py").performScrollTo().performClick()
+        composeRule.onNodeWithTag("editor-file-c.py").performScrollTo().performClick()
+
+        composeRule.waitUntil(10_000) { currentFileName() == "c.py" }
+        composeRule.onNodeWithTag("editor-input").assertTextEquals("C")
+    }
+
+    @Test
+    fun rapidProjectSelectionEndsOnLastTappedProject() {
+        val root = File(context.filesDir, "projects").apply { mkdirs() }
+        listOf("Phase2RapidProjectB", "Phase2RapidProjectC").forEach { name ->
+            root.resolve(name).apply {
+                deleteRecursively()
+                mkdirs()
+                resolve("main.py").writeText(name)
+            }
+        }
+        prepareProject(
+            "Phase2RapidProjectA",
+            mapOf("main.py" to "A"),
+            "main.py",
+        )
+
+        composeRule.onNodeWithTag("nav-projects").performClick()
+        composeRule.onNodeWithTag("project-Phase2RapidProjectB").performScrollTo().performClick()
+        composeRule.onNodeWithTag("project-Phase2RapidProjectC").performScrollTo().performClick()
+
+        composeRule.waitUntil(10_000) {
+            currentProjectName() == "PHASE2RAPIDPROJECTC"
+        }
+    }
+
+    @Test
+    fun executionUsesFileSelectedByConcurrentNavigation() {
+        prepareProject(
+            "Phase2RunNavigation",
+            mapOf(
+                "a.py" to "print('RUN A')",
+                "b.py" to "print('RUN B')",
+            ),
+            "a.py",
+        )
+
+        composeRule.onNodeWithTag("editor-file-b.py").performScrollTo().performClick()
+        composeRule.onNodeWithTag("run-button").performClick()
+
+        composeRule.waitUntil(30_000) {
+            composeRule.onAllNodesWithTag("console-output").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("current-file-name").assertTextEquals("b.py")
+        composeRule.onNodeWithTag("console-output").assertTextContains("RUN B")
+    }
+
     private fun prepareProject(
         name: String,
         sources: Map<String, String>,
