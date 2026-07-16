@@ -11,7 +11,16 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 - REPL persistente por proyecto.
 - Importación y exportación de proyectos ZIP.
 - Incluye `requests`, `beautifulsoup4`, `openpyxl` y `defusedxml`.
+- Autosave seguro con recuperación de proyecto, archivo, pestaña y cursor.
 - Interfaz neobrutalista optimizada para teclado móvil.
+
+## Capturas
+
+<p align="center">
+  <img src="docs/screenshots/projects.png" alt="Gestor de proyectos de PixelPy" width="31%" />
+  <img src="docs/screenshots/editor.png" alt="Editor multifichero de PixelPy" width="31%" />
+  <img src="docs/screenshots/console.png" alt="Consola de ejecución de PixelPy" width="31%" />
+</p>
 
 ## Requisitos
 
@@ -26,7 +35,7 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 .\gradlew.bat :pyeditor:assembleDebug
 ```
 
-El APK se genera en `pyeditor/build/outputs/apk/debug/`.
+El APK se genera en `pyeditor/build/outputs/apk/development/debug/`.
 
 ## Versión
 

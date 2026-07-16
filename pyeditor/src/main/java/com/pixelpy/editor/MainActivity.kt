@@ -21,6 +21,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.*
@@ -34,11 +35,16 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chaquo.python.Python
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONArray
 import org.json.JSONObject
 import android.provider.OpenableColumns
@@ -52,7 +58,7 @@ private val Yellow = Color(0xFFFFD43B)
 private val Pink = Color(0xFFFF5DA2)
 private val Blue = Color(0xFF79D8FF)
 private val Green = Color(0xFF7EE787)
-private enum class Tab { Projects, Editor, Repl, Console }
+internal enum class Tab { Projects, Editor, Repl, Console }
 private data class RunRecord(val file: String, val ok: Boolean, val preview: String, val time: Long)
 private data class CodeSymbol(val kind: String, val name: String, val line: Int)
 private data class ReplEntry(val command: String, val output: String, val ok: Boolean)
@@ -78,10 +84,42 @@ class MainActivity : ComponentActivity() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     val projectsRoot = remember { File(context.filesDir, "projects").apply { mkdirs() } }
-    var dir by remember { mutableStateOf(prepareProjects(projectsRoot)) }
-    var files by remember { mutableStateOf(seed(dir)) }
-    var current by remember { mutableStateOf(files.first()) }
-    var code by remember { mutableStateOf(TextFieldValue(current.readText())) }
+    val sessionStore = remember { EditorSessionStore(context.applicationContext) }
+    val autosave = remember {
+        (context.applicationContext as PixelPyApp).autosaveCoordinator
+    }
+    val initialSession = remember {
+        val fallbackProject = prepareProjects(projectsRoot)
+        val fallbackFiles = seed(fallbackProject)
+        EditorSessionResolver.resolve(
+            projectsRoot,
+            fallbackProject,
+            fallbackFiles.first(),
+            sessionStore.load(),
+        )
+    }
+    val initialContent = remember {
+        autosave.latestContent(initialSession.file) ?: initialSession.file.readText()
+    }
+    var dir by remember { mutableStateOf(initialSession.project) }
+    var files by remember {
+        mutableStateOf(
+            initialSession.project.listFiles { file -> file.isFile && file.extension == "py" }
+                ?.sortedBy { it.name }
+                ?.ifEmpty { listOf(initialSession.file) }
+                ?: listOf(initialSession.file)
+        )
+    }
+    var current by remember { mutableStateOf(initialSession.file) }
+    var code by remember {
+        mutableStateOf(
+            TextFieldValue(
+                initialContent,
+                selection = TextRange(initialSession.selectionStart, initialSession.selectionEnd),
+            )
+        )
+    }
+    val selectionReference = remember { AtomicReference(code.selection) }
     var lastRunFile by remember { mutableStateOf(current.name) }
     var lastRunProject by remember { mutableStateOf(dir.absolutePath) }
     var lastRunSource by remember { mutableStateOf(code.text) }
@@ -92,7 +130,7 @@ class MainActivity : ComponentActivity() {
     var running by remember { mutableStateOf(false) }
     val runtimeBusy by PythonRuntimeCoordinator.busy.collectAsState()
     var lastErrorLine by remember { mutableStateOf<Int?>(null) }
-    var tab by remember { mutableStateOf(Tab.Editor) }
+    var tab by remember { mutableStateOf(Tab.valueOf(initialSession.tab)) }
     var newDialog by remember { mutableStateOf(false) }
     var newProjectDialog by remember { mutableStateOf(false) }
     var resourceVersion by remember { mutableIntStateOf(0) }
@@ -101,8 +139,127 @@ class MainActivity : ComponentActivity() {
     var inputBridge by remember { mutableStateOf<InputBridge?>(null) }
     var pendingPrompt by remember { mutableStateOf<String?>(null) }
     var history by remember { mutableStateOf(loadHistory(context)) }
-    fun open(file: File) { current.writeText(code.text); current = file; code = TextFieldValue(file.readText()); tab = Tab.Editor }
-    fun switchProject(project: File) { current.writeText(code.text); dir = project; files = project.listFiles { f -> f.extension == "py" }?.sortedBy { it.name }?.ifEmpty { listOf(File(project, "main.py").apply { writeText("print(\"Nuevo proyecto PixelPy\")\n") }) } ?: emptyList(); current = files.first(); code = TextFieldValue(current.readText()); tab = Tab.Projects }
+    val saveStates by autosave.states.collectAsState()
+    val saveStatus = saveStates[runCatching { current.canonicalPath }.getOrDefault(current.path)]
+        ?: SaveStatus.Saved
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    LaunchedEffect(Unit) {
+        autosave.registerFile(current, initialContent)
+    }
+
+    fun persistSession(
+        project: File = dir,
+        file: File = current,
+        activeTab: Tab = tab,
+        selection: TextRange = selectionReference.get(),
+    ) {
+        sessionStore.save(
+            projectsRoot,
+            project,
+            file,
+            activeTab.name,
+            selection.start,
+            selection.end,
+        )
+    }
+
+    suspend fun flushPendingSave(file: File = current): Boolean {
+        autosave.flushPendingSave(file)
+        val saved = autosave.status(file) != SaveStatus.Error
+        if (!saved) {
+            android.widget.Toast.makeText(
+                context,
+                "No se pudo guardar ${file.name}",
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+        return saved
+    }
+
+    fun openNow(file: File, destination: Tab = Tab.Editor, selection: TextRange = TextRange.Zero) {
+        val source = file.readText()
+        autosave.registerFile(file, source)
+        current = file.canonicalFile
+        code = TextFieldValue(source, selection = TextRange(
+            selection.start.coerceIn(0, source.length),
+            selection.end.coerceIn(0, source.length),
+        ))
+        selectionReference.set(code.selection)
+        tab = destination
+    }
+
+    fun open(file: File) {
+        if (file.canonicalFile == current.canonicalFile) {
+            tab = Tab.Editor
+            return
+        }
+        val outgoing = current
+        scope.launch {
+            if (!flushPendingSave(outgoing)) return@launch
+            openNow(file)
+        }
+    }
+
+    fun switchProject(project: File) {
+        if (project.canonicalFile == dir.canonicalFile) return
+        val outgoing = current
+        scope.launch {
+            if (!flushPendingSave(outgoing)) return@launch
+            val projectFiles = project.listFiles { file -> file.isFile && file.extension == "py" }
+                ?.sortedBy { it.name }
+                ?.ifEmpty {
+                    listOf(File(project, "main.py").apply {
+                        writeText("print(\"Nuevo proyecto PixelPy\")\n")
+                    })
+                }
+                ?: emptyList()
+            if (projectFiles.isNotEmpty()) {
+                dir = project.canonicalFile
+                files = projectFiles
+                openNow(projectFiles.first(), Tab.Projects)
+            }
+        }
+    }
+
+    LaunchedEffect(dir.path, current.path, tab, code.selection) {
+        delay(650)
+        persistSession()
+    }
+
+    val latestProject by rememberUpdatedState(dir)
+    val latestFile by rememberUpdatedState(current)
+    val latestTab by rememberUpdatedState(tab)
+    val latestBridge by rememberUpdatedState(inputBridge)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                sessionStore.save(
+                    projectsRoot,
+                    latestProject,
+                    latestFile,
+                    latestTab.name,
+                    selectionReference.get().start,
+                    selectionReference.get().end,
+                )
+                autosave.flushAsync(latestFile)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            latestBridge?.cancel()
+            sessionStore.save(
+                projectsRoot,
+                latestProject,
+                latestFile,
+                latestTab.name,
+                selectionReference.get().start,
+                selectionReference.get().end,
+            )
+            autosave.flushAsync(latestFile)
+        }
+    }
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val source = exportFile
         if (uri != null && source != null) {
@@ -113,13 +270,17 @@ class MainActivity : ComponentActivity() {
         exportFile = null
     }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) runCatching {
-            val requested = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')?.takeIf { it.endsWith(".py") } ?: "importado.py"
-            var target = File(dir, requested); var number = 2
-            while (target.exists()) { target = File(dir, requested.removeSuffix(".py") + "_$number.py"); number++ }
-            context.contentResolver.openInputStream(uri)!!.use { inputStream -> target.outputStream().use { inputStream.copyTo(it) } }
-            files = dir.listFiles { f -> f.extension == "py" }!!.sortedBy { it.name }; open(target)
-        }.onFailure { android.widget.Toast.makeText(context, "No se pudo importar", android.widget.Toast.LENGTH_SHORT).show() }
+        if (uri != null) scope.launch {
+            if (!flushPendingSave()) return@launch
+            runCatching {
+                val requested = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')?.takeIf { it.endsWith(".py") } ?: "importado.py"
+                var target = File(dir, requested); var number = 2
+                while (target.exists()) { target = File(dir, requested.removeSuffix(".py") + "_$number.py"); number++ }
+                context.contentResolver.openInputStream(uri)!!.use { inputStream -> target.outputStream().use { inputStream.copyTo(it) } }
+                files = dir.listFiles { f -> f.extension == "py" }!!.sortedBy { it.name }
+                openNow(target)
+            }.onFailure { android.widget.Toast.makeText(context, "No se pudo importar", android.widget.Toast.LENGTH_SHORT).show() }
+        }
     }
     val resourceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) runCatching {
@@ -144,14 +305,16 @@ class MainActivity : ComponentActivity() {
 
     fun runCode(debug: Boolean = false) {
         if (running || runtimeBusy) { android.widget.Toast.makeText(context, "El runtime Python está ocupado", android.widget.Toast.LENGTH_SHORT).show(); return }
-        current.writeText(code.text); backupFile(current); running = true; tab = Tab.Console
-        val executedFile = current.name
-        val executedSource = code.text
-        val executedProject = dir.absolutePath
-        lastRunFile = executedFile; lastRunProject = executedProject; lastRunSource = executedSource
-        val bridge = InputBridge { question -> scope.launch(Dispatchers.Main) { pendingPrompt = question.ifBlank { "Python solicita un valor" } } }
-        inputBridge = bridge
         scope.launch {
+            if (!flushPendingSave()) return@launch
+            if (running || runtimeBusy) return@launch
+            backupFile(current); running = true; tab = Tab.Console
+            val executedFile = current.name
+            val executedSource = code.text
+            val executedProject = dir.absolutePath
+            lastRunFile = executedFile; lastRunProject = executedProject; lastRunSource = executedSource
+            val bridge = InputBridge { question -> scope.launch(Dispatchers.Main) { pendingPrompt = question.ifBlank { "Python solicita un valor" } } }
+            inputBridge = bridge
             try {
                 val result = withContext(Dispatchers.Default) {
                     PythonRuntimeCoordinator.runExclusive {
@@ -182,10 +345,10 @@ class MainActivity : ComponentActivity() {
     fun stopCode() { inputBridge?.cancel(); pendingPrompt = null; output = "Deteniendo ejecución…" }
 
     MaterialTheme(colorScheme = lightColorScheme(primary = Ink, background = Paper, surface = Paper)) {
-        Scaffold(containerColor = Paper, topBar = {
+        Scaffold(modifier = Modifier.testTag("pixelpy-root"), containerColor = Paper, topBar = {
             Row(Modifier.fillMaxWidth().background(Yellow).statusBarsPadding().height(68.dp).border(3.dp, Ink).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(38.dp).background(Ink), contentAlignment = Alignment.Center) { Text("P_", color = Yellow, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black) }
-                Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) { Text("PIXELPY", fontWeight = FontWeight.Black, fontSize = 21.sp); Text(current.name, fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
+                Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) { Text("PIXELPY", fontWeight = FontWeight.Black, fontSize = 21.sp); Text(current.name, Modifier.testTag("current-file-name"), fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
                 if (tab == Tab.Editor || running) {
                     if (!running) { BrutalButton("DEBUG", Blue) { runCode(true) }; Spacer(Modifier.width(6.dp)) }
                     BrutalButton(if (running) "■ DETENER" else "▶ EJECUTAR", if (running) Pink else Green, onClick = { if (running) stopCode() else runCode(false) })
@@ -206,26 +369,55 @@ class MainActivity : ComponentActivity() {
             Box(Modifier.padding(padding).fillMaxSize()) {
                 when (tab) {
                     Tab.Projects -> Projects(remember(projectVersion) { projectsRoot.listFiles { f -> f.isDirectory }?.sortedBy { it.name } ?: emptyList() }, dir, files, remember(dir, resourceVersion) { dir.listFiles { f -> f.isFile && f.extension != "py" }?.sortedBy { it.name } ?: emptyList() }, current, onProject = ::switchProject, onNewProject = { newProjectDialog = true }, onImportProject = { projectImportLauncher.launch(arrayOf("application/zip", "application/octet-stream")) }, onExportProject = { project -> val zip = File(context.cacheDir, project.name + ".zip"); zipProject(project, zip); exportFile = zip; saveLauncher.launch(zip.name) }, onOpen = ::open, onNew = { newDialog = true }, onImport = { importLauncher.launch(arrayOf("text/x-python", "text/plain", "*/*")) }, onImportResource = { resourceLauncher.launch(arrayOf("*/*")) }, onDelete = { file ->
-                        if (files.size > 1) { moveToTrash(file); files = dir.listFiles { f -> f.extension == "py" }?.sortedBy { it.name } ?: emptyList(); open(files.first()) }
-                    }, onDeleteResource = { file -> if (moveToTrash(file)) resourceVersion++ }, onTrashChanged = { files = dir.listFiles { f -> f.extension == "py" }?.sortedBy { it.name } ?: emptyList(); resourceVersion++ }, onRename = { file, raw -> val renamed = File(dir, raw.replace(Regex("[^a-zA-Z0-9_-]"), "_").removeSuffix(".py") + ".py"); if (!renamed.exists() && file.renameTo(renamed)) { files = dir.listFiles { f -> f.extension == "py" }!!.sortedBy { it.name }; if (file == current) { current = renamed }; true } else false }, onDuplicate = { file -> var copy = File(dir, file.nameWithoutExtension + "_copia.py"); var n = 2; while(copy.exists()) { copy = File(dir, file.nameWithoutExtension + "_copia$n.py"); n++ }; file.copyTo(copy); files = dir.listFiles { f -> f.extension == "py" }!!.sortedBy { it.name } }, onShare = { file ->
+                        scope.launch {
+                            if (!flushPendingSave(file.takeIf { it == current } ?: current)) return@launch
+                            if (files.size > 1) {
+                                moveToTrash(file)
+                                files = dir.listFiles { f -> f.extension == "py" }?.sortedBy { it.name } ?: emptyList()
+                                if (file == current) openNow(files.first())
+                            }
+                        }
+                    }, onDeleteResource = { file -> if (moveToTrash(file)) resourceVersion++ }, onTrashChanged = { files = dir.listFiles { f -> f.extension == "py" }?.sortedBy { it.name } ?: emptyList(); resourceVersion++ }, onRename = { file, raw ->
+                        scope.launch {
+                            if (file == current && !flushPendingSave(file)) return@launch
+                            val renamed = File(dir, raw.replace(Regex("[^a-zA-Z0-9_-]"), "_").removeSuffix(".py") + ".py")
+                            if (!renamed.exists() && file.renameTo(renamed)) {
+                                files = dir.listFiles { f -> f.extension == "py" }!!.sortedBy { it.name }
+                                if (file == current) {
+                                    current = renamed
+                                    autosave.registerFile(renamed, code.text)
+                                }
+                            } else android.widget.Toast.makeText(context, "No se pudo renombrar", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }, onDuplicate = { file -> scope.launch { if (file == current && !flushPendingSave(file)) return@launch; var copy = File(dir, file.nameWithoutExtension + "_copia.py"); var n = 2; while(copy.exists()) { copy = File(dir, file.nameWithoutExtension + "_copia$n.py"); n++ }; file.copyTo(copy); files = dir.listFiles { f -> f.extension == "py" }!!.sortedBy { it.name } } }, onShare = { file ->
                         val uri = FileProvider.getUriForFile(context, "com.pixelpy.editor.files", file); context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = mime(file); putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "Compartir ${file.name}"))
                     })
-                    Tab.Editor -> Editor(files, current, code, onOpen = ::open, onCode = { code = it; current.writeText(it.text) })
+                    Tab.Editor -> Editor(files, current, code, saveStatus, onOpen = ::open, onCode = { next ->
+                        val textChanged = next.text != code.text
+                        selectionReference.set(next.selection)
+                        code = next
+                        if (textChanged) autosave.onEdit(current, next.text)
+                    })
                     Tab.Repl -> ReplScreen(dir, replEntries, runtimeBusy) { replEntries = it }
                     Tab.Console -> Console(lastRunFile, lastRunSource, output, generated, history, success, running, lastErrorLine, onBack = { tab = Tab.Editor }, onGoToLine = { line ->
-                        current.writeText(code.text)
-                        val target = File(lastRunProject, lastRunFile)
-                        if (target.exists()) {
-                            val targetProject = requireNotNull(target.parentFile)
-                            if (targetProject != dir) {
-                                dir = targetProject
-                                files = targetProject.listFiles { file -> file.extension == "py" }?.sortedBy { it.name } ?: emptyList()
+                        scope.launch {
+                            if (!flushPendingSave()) return@launch
+                            val target = File(lastRunProject, lastRunFile)
+                            if (target.exists()) {
+                                val targetProject = requireNotNull(target.parentFile)
+                                if (targetProject != dir) {
+                                    dir = targetProject
+                                    files = targetProject.listFiles { file -> file.extension == "py" }?.sortedBy { it.name } ?: emptyList()
+                                }
+                                val value = editorValueAtLine(target, line)
+                                autosave.registerFile(target, value.text)
+                                current = target
+                                code = value
+                                selectionReference.set(value.selection)
+                                tab = Tab.Editor
+                            } else {
+                                android.widget.Toast.makeText(context, "El archivo ejecutado ya no existe", android.widget.Toast.LENGTH_SHORT).show()
                             }
-                            current = target
-                            code = editorValueAtLine(target, line)
-                            tab = Tab.Editor
-                        } else {
-                            android.widget.Toast.makeText(context, "El archivo ejecutado ya no existe", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     }, onRun = ::runCode, onSave = { exportFile = it; saveLauncher.launch(it.name) }, onShare = { file ->
                         val uri = FileProvider.getUriForFile(context, "com.pixelpy.editor.files", file)
@@ -236,15 +428,29 @@ class MainActivity : ComponentActivity() {
         }
     }
     if (newDialog) NewFileDialog(onDismiss = { newDialog = false }) { raw ->
-        val name = raw.trim().replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "script" } + ".py"
-        val file = File(dir, name); if (!file.exists()) file.writeText("# $name\nprint(\"Hola desde PixelPy\")\n")
-        files = dir.listFiles { f -> f.extension == "py" }!!.sortedBy { it.name }; open(file); newDialog = false
+        scope.launch {
+            if (!flushPendingSave()) return@launch
+            val name = raw.trim().replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "script" } + ".py"
+            val file = File(dir, name); if (!file.exists()) file.writeText("# $name\nprint(\"Hola desde PixelPy\")\n")
+            files = dir.listFiles { f -> f.extension == "py" }!!.sortedBy { it.name }
+            openNow(file)
+            newDialog = false
+        }
     }
     if (newProjectDialog) NewProjectDialog(onDismiss = { newProjectDialog = false }) { raw ->
-        val safe = raw.trim().replace(Regex("[^a-zA-Z0-9 _-]"), "_").ifBlank { "Nuevo proyecto" }
-        var project = File(projectsRoot, safe); var number = 2
-        while (project.exists()) { project = File(projectsRoot, "$safe $number"); number++ }
-        project.mkdirs(); File(project, "main.py").writeText("# ${project.name}\nprint(\"Hola desde ${project.name}\")\n"); switchProject(project); newProjectDialog = false
+        scope.launch {
+            if (!flushPendingSave()) return@launch
+            val safe = raw.trim().replace(Regex("[^a-zA-Z0-9 _-]"), "_").ifBlank { "Nuevo proyecto" }
+            var project = File(projectsRoot, safe); var number = 2
+            while (project.exists()) { project = File(projectsRoot, "$safe $number"); number++ }
+            project.mkdirs()
+            val main = File(project, "main.py").apply { writeText("# ${project.name}\nprint(\"Hola desde ${project.name}\")\n") }
+            dir = project
+            files = listOf(main)
+            openNow(main, Tab.Projects)
+            projectVersion++
+            newProjectDialog = false
+        }
     }
     pendingPrompt?.let { question ->
         InputDialog(question, onSubmit = { answer -> pendingPrompt = null; inputBridge?.submit(answer) })
@@ -253,13 +459,13 @@ class MainActivity : ComponentActivity() {
 
 @Composable private fun RowScope.Nav(value: Tab, selected: Tab, label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: (Tab) -> Unit) {
     val active = value == selected
-    Column(Modifier.weight(1f).fillMaxHeight().clickable { onClick(value) }.background(if (active) Yellow else Ink), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+    Column(Modifier.weight(1f).fillMaxHeight().testTag("nav-${value.name.lowercase()}").clickable { onClick(value) }.background(if (active) Yellow else Ink), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Icon(icon, null, tint = if (active) Ink else Color.White)
         Text(label, color = if (active) Ink else Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp)
     }
 }
 
-@Composable private fun Projects(projects: List<File>, selectedProject: File, files: List<File>, resources: List<File>, current: File, onProject: (File) -> Unit, onNewProject: () -> Unit, onImportProject: () -> Unit, onExportProject: (File) -> Unit, onOpen: (File) -> Unit, onNew: () -> Unit, onImport: () -> Unit, onImportResource: () -> Unit, onDelete: (File) -> Unit, onDeleteResource: (File) -> Unit, onTrashChanged: () -> Unit, onRename: (File, String) -> Boolean, onDuplicate: (File) -> Unit, onShare: (File) -> Unit) {
+@Composable private fun Projects(projects: List<File>, selectedProject: File, files: List<File>, resources: List<File>, current: File, onProject: (File) -> Unit, onNewProject: () -> Unit, onImportProject: () -> Unit, onExportProject: (File) -> Unit, onOpen: (File) -> Unit, onNew: () -> Unit, onImport: () -> Unit, onImportResource: () -> Unit, onDelete: (File) -> Unit, onDeleteResource: (File) -> Unit, onTrashChanged: () -> Unit, onRename: (File, String) -> Unit, onDuplicate: (File) -> Unit, onShare: (File) -> Unit) {
     var renameTarget by remember { mutableStateOf<File?>(null) }
     var packages by remember { mutableStateOf(false) }
     var trash by remember { mutableStateOf(false) }
@@ -267,7 +473,7 @@ class MainActivity : ComponentActivity() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { Text("PROYECTOS", fontWeight = FontWeight.Black, fontSize = 30.sp); Text("Tus archivos, módulos y recursos locales.", fontWeight = FontWeight.Medium); Spacer(Modifier.height(10.dp)); Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { projects.forEach { project -> Surface(onClick = { onProject(project) }, color = if (project == selectedProject) Yellow else Color.White, border = BorderStroke(3.dp, Ink), shape = RoundedCornerShape(0.dp)) { Text("▣ ${project.name}", Modifier.padding(12.dp, 9.dp), fontWeight = FontWeight.Black) } }; Surface(onClick = onNewProject, color = Pink, border = BorderStroke(3.dp, Ink), shape = RoundedCornerShape(0.dp)) { Text("＋ PROYECTO", Modifier.padding(12.dp, 9.dp), fontWeight = FontWeight.Black) } }; Spacer(Modifier.height(12.dp)); Text(selectedProject.name.uppercase(), fontWeight = FontWeight.Black, fontSize = 18.sp); Spacer(Modifier.height(8.dp)); Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { BrutalButton("＋ ARCHIVO", Pink, Modifier.weight(1f), onClick = onNew); Box(Modifier.weight(1f)) { BrutalButton("MÁS ACCIONES", Blue, Modifier.fillMaxWidth()) { projectActions = true }; DropdownMenu(expanded = projectActions, onDismissRequest = { projectActions = false }) { DropdownMenuItem(text = { Text("Importar archivo .py") }, onClick = { projectActions = false; onImport() }, leadingIcon = { Icon(Icons.Outlined.FileOpen, null) }); DropdownMenuItem(text = { Text("Añadir recurso") }, onClick = { projectActions = false; onImportResource() }, leadingIcon = { Icon(Icons.Outlined.AttachFile, null) }); DropdownMenuItem(text = { Text("Importar proyecto ZIP") }, onClick = { projectActions = false; onImportProject() }, leadingIcon = { Icon(Icons.Outlined.FolderZip, null) }); DropdownMenuItem(text = { Text("Exportar proyecto ZIP") }, onClick = { projectActions = false; onExportProject(selectedProject) }, leadingIcon = { Icon(Icons.Outlined.Archive, null) }); DropdownMenuItem(text = { Text("Librerías incluidas") }, onClick = { projectActions = false; packages = true }, leadingIcon = { Icon(Icons.Outlined.Extension, null) }); DropdownMenuItem(text = { Text("Papelera") }, onClick = { projectActions = false; trash = true }, leadingIcon = { Icon(Icons.Outlined.Delete, null) }) } } } }
+        item { Text("PROYECTOS", fontWeight = FontWeight.Black, fontSize = 30.sp); Text("Tus archivos, módulos y recursos locales.", fontWeight = FontWeight.Medium); Spacer(Modifier.height(10.dp)); Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { projects.forEach { project -> Surface(onClick = { onProject(project) }, modifier = Modifier.testTag("project-${project.name}"), color = if (project == selectedProject) Yellow else Color.White, border = BorderStroke(3.dp, Ink), shape = RoundedCornerShape(0.dp)) { Text("▣ ${project.name}", Modifier.padding(12.dp, 9.dp), fontWeight = FontWeight.Black) } }; Surface(onClick = onNewProject, color = Pink, border = BorderStroke(3.dp, Ink), shape = RoundedCornerShape(0.dp)) { Text("＋ PROYECTO", Modifier.padding(12.dp, 9.dp), fontWeight = FontWeight.Black) } }; Spacer(Modifier.height(12.dp)); Text(selectedProject.name.uppercase(), Modifier.testTag("current-project-name"), fontWeight = FontWeight.Black, fontSize = 18.sp); Spacer(Modifier.height(8.dp)); Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { BrutalButton("＋ ARCHIVO", Pink, Modifier.weight(1f), onClick = onNew); Box(Modifier.weight(1f)) { BrutalButton("MÁS ACCIONES", Blue, Modifier.fillMaxWidth()) { projectActions = true }; DropdownMenu(expanded = projectActions, onDismissRequest = { projectActions = false }) { DropdownMenuItem(text = { Text("Importar archivo .py") }, onClick = { projectActions = false; onImport() }, leadingIcon = { Icon(Icons.Outlined.FileOpen, null) }); DropdownMenuItem(text = { Text("Añadir recurso") }, onClick = { projectActions = false; onImportResource() }, leadingIcon = { Icon(Icons.Outlined.AttachFile, null) }); DropdownMenuItem(text = { Text("Importar proyecto ZIP") }, onClick = { projectActions = false; onImportProject() }, leadingIcon = { Icon(Icons.Outlined.FolderZip, null) }); DropdownMenuItem(text = { Text("Exportar proyecto ZIP") }, onClick = { projectActions = false; onExportProject(selectedProject) }, leadingIcon = { Icon(Icons.Outlined.Archive, null) }); DropdownMenuItem(text = { Text("Librerías incluidas") }, onClick = { projectActions = false; packages = true }, leadingIcon = { Icon(Icons.Outlined.Extension, null) }); DropdownMenuItem(text = { Text("Papelera") }, onClick = { projectActions = false; trash = true }, leadingIcon = { Icon(Icons.Outlined.Delete, null) }) } } } }
         items(files, key = { it.path }) { file ->
             BrutalCard(if (file == current) Blue else Color.White) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -276,7 +482,7 @@ class MainActivity : ComponentActivity() {
                     IconButton(onClick = { onShare(file) }) { Icon(Icons.Outlined.Share, "Compartir") }
                     IconButton(onClick = { onDelete(file) }, enabled = files.size > 1) { Icon(Icons.Outlined.Delete, "Eliminar") }
                 }
-                Spacer(Modifier.height(10.dp)); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { BrutalButton(if (file == current) "ABIERTO" else "ABRIR", if (file == current) Green else Yellow, Modifier.weight(1f), onClick = { onOpen(file) }); IconButton(onClick = { renameTarget = file }, Modifier.border(2.dp, Ink)) { Icon(Icons.Outlined.Edit, "Renombrar") }; IconButton(onClick = { onDuplicate(file) }, Modifier.border(2.dp, Ink)) { Icon(Icons.Outlined.ContentCopy, "Duplicar") } }
+                Spacer(Modifier.height(10.dp)); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { BrutalButton(if (file == current) "ABIERTO" else "ABRIR", if (file == current) Green else Yellow, Modifier.weight(1f).testTag("project-open-${file.name}"), onClick = { onOpen(file) }); IconButton(onClick = { renameTarget = file }, Modifier.border(2.dp, Ink)) { Icon(Icons.Outlined.Edit, "Renombrar") }; IconButton(onClick = { onDuplicate(file) }, Modifier.border(2.dp, Ink)) { Icon(Icons.Outlined.ContentCopy, "Duplicar") } }
             }
         }
         item { Spacer(Modifier.height(4.dp)); Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("RECURSOS", fontWeight = FontWeight.Black, fontSize = 22.sp); Text("CSV, JSON, Excel, imágenes, TXT o ZIP", fontSize = 12.sp) }; BrutalButton("＋ AÑADIR", Blue, onClick = onImportResource) } }
@@ -293,12 +499,12 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    renameTarget?.let { file -> RenameDialog(file.nameWithoutExtension, onDismiss = { renameTarget = null }) { if (onRename(file, it)) renameTarget = null } }
+    renameTarget?.let { file -> RenameDialog(file.nameWithoutExtension, onDismiss = { renameTarget = null }) { onRename(file, it); renameTarget = null } }
     if (packages) PackagesDialog { packages = false }
     if (trash) TrashDialog(selectedProject, onDismiss = { trash = false }) { onTrashChanged() }
 }
 
-@Composable private fun Editor(files: List<File>, current: File, code: TextFieldValue, onOpen: (File) -> Unit, onCode: (TextFieldValue) -> Unit) {
+@Composable private fun Editor(files: List<File>, current: File, code: TextFieldValue, saveStatus: SaveStatus, onOpen: (File) -> Unit, onCode: (TextFieldValue) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var undo by remember { mutableStateOf<List<TextFieldValue>>(emptyList()) }
     var redo by remember { mutableStateOf<List<TextFieldValue>>(emptyList()) }
@@ -319,9 +525,9 @@ class MainActivity : ComponentActivity() {
     }
     Column(Modifier.fillMaxSize().imePadding().padding(12.dp)) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            files.forEach { file -> Surface(onClick = { onOpen(file) }, color = if (file == current) Yellow else Color.White, border = BorderStroke(2.dp, Ink), shape = RoundedCornerShape(0.dp)) { Text((if (file == current) "● " else "") + file.name, Modifier.padding(horizontal = 11.dp, vertical = 7.dp), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.sp) } }
+            files.forEach { file -> Surface(onClick = { onOpen(file) }, modifier = Modifier.testTag("editor-file-${file.name}"), color = if (file == current) Yellow else Color.White, border = BorderStroke(2.dp, Ink), shape = RoundedCornerShape(0.dp)) { Text((if (file == current) "● " else "") + file.name, Modifier.padding(horizontal = 11.dp, vertical = 7.dp), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.sp) } }
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Column { Text("EDITOR", fontWeight = FontWeight.Black, fontSize = 18.sp); Text("● GUARDADO", color = Color(0xFF16853B), fontWeight = FontWeight.Black, fontSize = 9.sp) }; Spacer(Modifier.weight(1f)); IconButton(onClick = { searching = !searching }) { Icon(Icons.Outlined.Search, "Buscar") }; IconButton(onClick = { if (undo.isNotEmpty()) { redo = redo + code; val previous = undo.last(); undo = undo.dropLast(1); onCode(previous) } }, enabled = undo.isNotEmpty()) { Icon(Icons.Outlined.Undo, "Deshacer") }; IconButton(onClick = { if (redo.isNotEmpty()) { undo = undo + code; val next = redo.last(); redo = redo.dropLast(1); onCode(next) } }, enabled = redo.isNotEmpty()) { Icon(Icons.Outlined.Redo, "Rehacer") }; Box { IconButton(onClick = { moreTools = true }) { Icon(Icons.Outlined.MoreVert, "Más herramientas") }; DropdownMenu(moreTools, { moreTools = false }) { DropdownMenuItem({ Text("Estructura del código") }, { moreTools = false; showOutline = true }, leadingIcon = { Icon(Icons.Outlined.AccountTree, null) }); DropdownMenuItem({ Text("Versiones anteriores") }, { moreTools = false; showVersions = true }, leadingIcon = { Icon(Icons.Outlined.Restore, null) }); DropdownMenuItem({ Text("Reducir texto") }, { moreTools = false; fontSize = (fontSize - 1).coerceAtLeast(11f) }, leadingIcon = { Text("A−", fontWeight = FontWeight.Black) }); DropdownMenuItem({ Text("Aumentar texto") }, { moreTools = false; fontSize = (fontSize + 1).coerceAtMost(24f) }, leadingIcon = { Text("A+", fontWeight = FontWeight.Black) }) } } }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Column { Text("EDITOR", fontWeight = FontWeight.Black, fontSize = 18.sp); val statusText = when (saveStatus) { SaveStatus.Editing -> "● EDITANDO"; SaveStatus.Saving -> "● GUARDANDO"; SaveStatus.Saved -> "● GUARDADO"; SaveStatus.Error -> "● ERROR AL GUARDAR" }; Text(statusText, Modifier.testTag("save-status"), color = if (saveStatus == SaveStatus.Error) Color(0xFFC62828) else Color(0xFF16853B), fontWeight = FontWeight.Black, fontSize = 9.sp) }; Spacer(Modifier.weight(1f)); IconButton(onClick = { searching = !searching }) { Icon(Icons.Outlined.Search, "Buscar") }; IconButton(onClick = { if (undo.isNotEmpty()) { redo = redo + code; val previous = undo.last(); undo = undo.dropLast(1); onCode(previous) } }, enabled = undo.isNotEmpty()) { Icon(Icons.Outlined.Undo, "Deshacer") }; IconButton(onClick = { if (redo.isNotEmpty()) { undo = undo + code; val next = redo.last(); redo = redo.dropLast(1); onCode(next) } }, enabled = redo.isNotEmpty()) { Icon(Icons.Outlined.Redo, "Rehacer") }; Box { IconButton(onClick = { moreTools = true }) { Icon(Icons.Outlined.MoreVert, "Más herramientas") }; DropdownMenu(moreTools, { moreTools = false }) { DropdownMenuItem({ Text("Estructura del código") }, { moreTools = false; showOutline = true }, leadingIcon = { Icon(Icons.Outlined.AccountTree, null) }); DropdownMenuItem({ Text("Versiones anteriores") }, { moreTools = false; showVersions = true }, leadingIcon = { Icon(Icons.Outlined.Restore, null) }); DropdownMenuItem({ Text("Reducir texto") }, { moreTools = false; fontSize = (fontSize - 1).coerceAtLeast(11f) }, leadingIcon = { Text("A−", fontWeight = FontWeight.Black) }); DropdownMenuItem({ Text("Aumentar texto") }, { moreTools = false; fontSize = (fontSize + 1).coerceAtMost(24f) }, leadingIcon = { Text("A+", fontWeight = FontWeight.Black) }) } } }
         if (searching) {
             Column(Modifier.fillMaxWidth().background(Yellow).border(2.dp, Ink).padding(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -342,7 +548,7 @@ class MainActivity : ComponentActivity() {
                 val lines = code.text.count { it == '\n' } + 1
                 Text((1..lines).joinToString("\n"), color = Color(0xFF7D8590), fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, lineHeight = (fontSize + 7).sp, textAlign = androidx.compose.ui.text.style.TextAlign.End)
                 Spacer(Modifier.width(10.dp)); Box(Modifier.width(2.dp).fillMaxHeight().background(Color(0xFF444C56))); Spacer(Modifier.width(10.dp))
-                BasicTextField(value = code, onValueChange = { raw -> change(autoIndent(code, raw)) }, modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()), textStyle = TextStyle(color = Color.White, fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, lineHeight = (fontSize + 7).sp), cursorBrush = SolidColor(Yellow), visualTransformation = PythonHighlight)
+                BasicTextField(value = code, onValueChange = { raw -> change(autoIndent(code, raw)) }, modifier = Modifier.testTag("editor-input").fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()), textStyle = TextStyle(color = Color.White, fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, lineHeight = (fontSize + 7).sp), cursorBrush = SolidColor(Yellow), visualTransformation = PythonHighlight)
             }
         }
         if (completions.isNotEmpty()) {
