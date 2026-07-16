@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
-    <application android:name=".PixelPyApp" android:allowBackup="true" android:icon="@drawable/pixelpy_icon" android:roundIcon="@drawable/pixelpy_icon" android:label="PixelPy" android:theme="@style/Theme.PixelPy">
+    <application android:name=".PixelPyApp" android:allowBackup="true" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:label="PixelPy" android:theme="@style/Theme.PixelPy">
         <provider android:name="androidx.core.content.FileProvider" android:authorities="com.pixelpy.editor.files" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths"/>
         </provider>

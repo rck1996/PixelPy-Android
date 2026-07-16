@@ -17,8 +17,8 @@ android {
         applicationId = "com.pixelpy.editor"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "1.0.0"
+        versionCode = 11
+        versionName = "1.0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     flavorDimensions += "target"

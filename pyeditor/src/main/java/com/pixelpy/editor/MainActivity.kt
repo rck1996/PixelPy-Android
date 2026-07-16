@@ -19,6 +19,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -449,7 +450,7 @@ class MainActivity : ComponentActivity() {
     MaterialTheme(colorScheme = lightColorScheme(primary = Ink, background = Paper, surface = Paper)) {
         Scaffold(modifier = Modifier.testTag("pixelpy-root"), containerColor = Paper, topBar = {
             Row(Modifier.fillMaxWidth().background(Yellow).statusBarsPadding().height(68.dp).border(3.dp, Ink).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(38.dp).background(Ink), contentAlignment = Alignment.Center) { Text("P_", color = Yellow, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black) }
+                Icon(painterResource(R.drawable.pixelpy_brand_mark), "PixelPy", Modifier.size(38.dp), tint = Color.Unspecified)
                 Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) { Text("PIXELPY", fontWeight = FontWeight.Black, fontSize = 21.sp); Text(current.name, Modifier.testTag("current-file-name"), fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
                 if (tab == Tab.Editor || running) {
                     if (!running) { BrutalButton("DEBUG", Blue) { runCode(true) }; Spacer(Modifier.width(6.dp)) }
