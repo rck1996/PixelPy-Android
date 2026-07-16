@@ -7,7 +7,6 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import com.chaquo.python.Python
-import com.chaquo.python.android.AndroidPlatform
 import java.io.File
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,13 +21,12 @@ class EmulatorSmokeTest {
             val device = UiDevice.getInstance(instrumentation)
             assertTrue(device.wait(Until.hasObject(By.text("PIXELPY")), 5_000))
 
-            if (!Python.isStarted()) {
-                Python.start(AndroidPlatform(instrumentation.targetContext))
-            }
+            val applicationContext = instrumentation.targetContext.applicationContext
+            assertTrue(applicationContext is PixelPyApp)
             assertTrue(Python.isStarted())
             val python = Python.getInstance()
             val runner = python.getModule("runner")
-            val workDir = File(instrumentation.targetContext.cacheDir, "emulator-smoke")
+            val workDir = File(applicationContext.cacheDir, "emulator-smoke")
             val result = runner.callAttr(
                 "execute",
                 "print(\"PixelPy emulator OK\")",

@@ -19,7 +19,7 @@ android {
         targetSdk = 35
         versionCode = 10
         versionName = "1.0.0"
-        testInstrumentationRunner = "com.pixelpy.editor.PixelPyTestRunner"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     flavorDimensions += "target"
     productFlavors {
