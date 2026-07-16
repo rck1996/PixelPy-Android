@@ -19,7 +19,18 @@ android {
         targetSdk = 35
         versionCode = 10
         versionName = "1.0.0"
-        ndk { abiFilters += listOf("arm64-v8a") }
+        testInstrumentationRunner = "com.pixelpy.editor.PixelPyTestRunner"
+    }
+    flavorDimensions += "target"
+    productFlavors {
+        create("development") {
+            dimension = "target"
+            ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        }
+        create("production") {
+            dimension = "target"
+            ndk { abiFilters += listOf("arm64-v8a") }
+        }
     }
     signingConfigs {
         if (keystoreProperties.isNotEmpty()) create("release") {
@@ -41,6 +52,27 @@ android {
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+    testOptions {
+        managedDevices {
+            localDevices {
+                create("pixelApi35") {
+                    device = "Pixel 6"
+                    apiLevel = 35
+                    systemImageSource = "aosp"
+                }
+            }
+        }
+    }
+}
+androidComponents {
+    beforeVariants(selector().all()) { variant ->
+        val target = variant.productFlavors
+            .firstOrNull { it.first == "target" }
+            ?.second
+        variant.enable =
+            (target == "development" && variant.buildType == "debug") ||
+            (target == "production" && variant.buildType == "release")
+    }
 }
 chaquopy {
     defaultConfig {
@@ -65,4 +97,24 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:core-ktx:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit-ktx:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
+}
+
+tasks.register("testDebugUnitTest") {
+    group = "verification"
+    description = "Runs unit tests for the emulator-capable debug variant."
+    dependsOn("testDevelopmentDebugUnitTest")
+}
+tasks.register("lintDebug") {
+    group = "verification"
+    description = "Runs lint for the emulator-capable debug variant."
+    dependsOn("lintDevelopmentDebug")
+}
+tasks.register("pixelApi35DebugAndroidTest") {
+    group = "verification"
+    description = "Runs debug instrumentation tests on pixelApi35."
+    dependsOn("pixelApi35DevelopmentDebugAndroidTest")
 }
