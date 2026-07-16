@@ -12,3 +12,6 @@ release-keystore.jks
 keystore.properties
 /app/
 /releases/
+__pycache__/
+*.pyc
+/*.zip
