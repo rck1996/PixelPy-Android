@@ -66,19 +66,19 @@ class SessionRecoveryTest {
     @Test
     fun selectedProjectSurvivesActivityRecreation() {
         val root = File(context.filesDir, "projects").apply { mkdirs() }
-        root.resolve("Phase2ProjectB").apply {
-            deleteRecursively()
-            mkdirs()
-            resolve("main.py").writeText("print('B')")
+        listOf("Phase2ProjectA" to "print('A')", "Phase2ProjectB" to "print('B')").forEach { (name, source) ->
+            root.resolve(name).apply {
+                deleteRecursively()
+                mkdirs()
+                resolve("main.py").writeText(source)
+            }
         }
-        prepareProject(
-            "Phase2ProjectA",
-            mapOf("main.py" to "print('A')"),
-            "main.py",
-        )
-
+        composeRule.activityRule.scenario.recreate()
         composeRule.onNodeWithTag("nav-projects").performClick()
-        composeRule.onNodeWithTag("project-Phase2ProjectB").performClick()
+        composeRule.waitUntil(10_000) {
+            composeRule.onAllNodesWithTag("project-Phase2ProjectB").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("project-Phase2ProjectB").performScrollTo().performClick()
         composeRule.waitUntil(10_000) { currentFileName() == "main.py" && currentProjectName() == "PHASE2PROJECTB" }
         composeRule.activityRule.scenario.recreate()
 
@@ -176,7 +176,12 @@ class SessionRecoveryTest {
         composeRule.onNodeWithTag("run-button").performClick()
 
         composeRule.waitUntil(30_000) {
-            composeRule.onAllNodesWithTag("console-output").fetchSemanticsNodes().isNotEmpty()
+            runCatching {
+                composeRule.onNodeWithTag("console-output")
+                    .fetchSemanticsNode().config[SemanticsProperties.Text]
+                    .joinToString("") { it.text }
+                    .contains("RUN B")
+            }.getOrDefault(false)
         }
         composeRule.onNodeWithTag("current-file-name").assertTextEquals("b.py")
         composeRule.onNodeWithTag("console-output").assertTextContains("RUN B")

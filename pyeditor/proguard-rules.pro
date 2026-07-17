@@ -6,3 +6,10 @@
     public void cancel();
     public boolean isCancelled();
 }
+
+-keepclassmembers,allowoptimization class com.pixelpy.editor.AutomationInputBridge {
+    public java.lang.String request(java.lang.String);
+    public void submit(java.lang.String);
+    public void cancel();
+    public boolean isCancelled();
+}
