@@ -73,14 +73,24 @@ class InputBridge(private val onPrompt: (String) -> Unit) {
 }
 
 class MainActivity : ComponentActivity() {
+    private var requestedAutomationId by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { PixelPy() }
+        requestedAutomationId = intent.getStringExtra(EXTRA_AUTOMATION_ID)
+        setContent { PixelPy(requestedAutomationId) }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        requestedAutomationId = intent.getStringExtra(EXTRA_AUTOMATION_ID)
     }
 }
 
-@Composable fun PixelPy() {
+@Composable fun PixelPy(requestedAutomationId: String? = null) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val app = context.applicationContext as PixelPyApp
     val scope = rememberCoroutineScope()
     val transitions = remember { EditorTransitionCoordinator() }
     val projectsRoot = remember { File(context.filesDir, "projects").apply { mkdirs() } }
@@ -131,6 +141,7 @@ class MainActivity : ComponentActivity() {
     val runtimeBusy by PythonRuntimeCoordinator.busy.collectAsState()
     var lastErrorLine by remember { mutableStateOf<Int?>(null) }
     var tab by remember { mutableStateOf(Tab.valueOf(initialSession.tab)) }
+    var showAutomations by rememberSaveable { mutableStateOf(requestedAutomationId != null) }
     var newDialog by remember { mutableStateOf(false) }
     var newProjectDialog by remember { mutableStateOf(false) }
     var resourceVersion by remember { mutableIntStateOf(0) }
@@ -143,6 +154,10 @@ class MainActivity : ComponentActivity() {
     val saveStatus = saveStates[runCatching { current.canonicalPath }.getOrDefault(current.path)]
         ?: SaveStatus.Saved
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    LaunchedEffect(requestedAutomationId) {
+        if (requestedAutomationId != null) showAutomations = true
+    }
 
     LaunchedEffect(Unit) {
         autosave.registerFile(current, initialContent)
@@ -452,25 +467,35 @@ class MainActivity : ComponentActivity() {
             Row(Modifier.fillMaxWidth().background(Yellow).statusBarsPadding().height(68.dp).border(3.dp, Ink).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(painterResource(R.drawable.pixelpy_brand_mark), "PixelPy", Modifier.size(38.dp), tint = Color.Unspecified)
                 Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) { Text("PIXELPY", fontWeight = FontWeight.Black, fontSize = 21.sp); Text(current.name, Modifier.testTag("current-file-name"), fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
-                if (tab == Tab.Editor || running) {
+                if (!showAutomations && (tab == Tab.Editor || running)) {
                     if (!running) { BrutalButton("DEBUG", Blue) { runCode(true) }; Spacer(Modifier.width(6.dp)) }
                     BrutalButton(if (running) "■ DETENER" else "▶ EJECUTAR", if (running) Pink else Green, Modifier.testTag("run-button"), onClick = { if (running) stopCode() else runCode(false) })
                 } else {
                     Surface(color = Paper, border = BorderStroke(2.dp, Ink), shape = RoundedCornerShape(0.dp)) {
-                        Text(when (tab) { Tab.Projects -> "PROYECTOS"; Tab.Repl -> "REPL"; Tab.Console -> "CONSOLA"; Tab.Editor -> "EDITOR" }, Modifier.padding(horizontal = 10.dp, vertical = 7.dp), fontWeight = FontWeight.Black, fontSize = 10.sp)
+                        Text(if (showAutomations) "AUTOMATIZACIONES" else when (tab) { Tab.Projects -> "PROYECTOS"; Tab.Repl -> "REPL"; Tab.Console -> "CONSOLA"; Tab.Editor -> "EDITOR" }, Modifier.padding(horizontal = 10.dp, vertical = 7.dp), fontWeight = FontWeight.Black, fontSize = 10.sp)
                     }
                 }
             }
         }, bottomBar = {
             Row(Modifier.fillMaxWidth().background(Ink).navigationBarsPadding().height(68.dp)) {
-                Nav(Tab.Projects, tab, "PROYECTOS", Icons.Outlined.Folder) { tab = it }
-                Nav(Tab.Editor, tab, "EDITOR", Icons.Outlined.Code) { tab = it }
-                Nav(Tab.Repl, tab, "REPL", Icons.Outlined.DataObject) { tab = it }
-                Nav(Tab.Console, tab, "CONSOLA", Icons.Outlined.Terminal) { tab = it }
+                Nav(Tab.Projects, tab, "PROYECTOS", Icons.Outlined.Folder) { showAutomations = false; tab = it }
+                Nav(Tab.Editor, tab, "EDITOR", Icons.Outlined.Code) { showAutomations = false; tab = it }
+                Nav(Tab.Repl, tab, "REPL", Icons.Outlined.DataObject) { showAutomations = false; tab = it }
+                Nav(Tab.Console, tab, "CONSOLA", Icons.Outlined.Terminal) { showAutomations = false; tab = it }
             }
         }) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
-                when (tab) {
+                if (showAutomations) {
+                    AutomationScreen(
+                        projectsRoot = projectsRoot,
+                        repository = app.automationRepository,
+                        scheduler = app.automationScheduler,
+                        currentProject = dir,
+                        currentScript = current,
+                        flushCurrent = { flushPendingSave(current) },
+                        onBack = { showAutomations = false },
+                    )
+                } else when (tab) {
                     Tab.Projects -> Projects(remember(projectVersion) { projectsRoot.listFiles { f -> f.isDirectory }?.sortedBy { it.name } ?: emptyList() }, dir, files, remember(dir, resourceVersion) { dir.listFiles { f -> f.isFile && f.extension != "py" }?.sortedBy { it.name } ?: emptyList() }, current, onProject = ::switchProject, onNewProject = { newProjectDialog = true }, onImportProject = { projectImportLauncher.launch(arrayOf("application/zip", "application/octet-stream")) }, onExportProject = { project ->
                         transition {
                             val zip = File(context.cacheDir, project.name + ".zip")
@@ -525,7 +550,7 @@ class MainActivity : ComponentActivity() {
                                 dir.listFiles { candidate -> candidate.extension == "py" }!!.sortedBy { it.name }
                             }
                         }
-                    }, onShare = ::shareFile)
+                    }, onShare = ::shareFile, onAutomations = { showAutomations = true })
                     Tab.Editor -> Editor(files, current, code, saveStatus, onOpen = ::open, onCode = { next ->
                         val textChanged = next.text != code.text
                         selectionReference.set(next.selection)
@@ -615,7 +640,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun Projects(projects: List<File>, selectedProject: File, files: List<File>, resources: List<File>, current: File, onProject: (File) -> Unit, onNewProject: () -> Unit, onImportProject: () -> Unit, onExportProject: (File) -> Unit, onOpen: (File) -> Unit, onNew: () -> Unit, onImport: () -> Unit, onImportResource: () -> Unit, onDelete: (File) -> Unit, onDeleteResource: (File) -> Unit, onTrashChanged: () -> Unit, onRename: (File, String) -> Unit, onDuplicate: (File) -> Unit, onShare: (File) -> Unit) {
+@Composable private fun Projects(projects: List<File>, selectedProject: File, files: List<File>, resources: List<File>, current: File, onProject: (File) -> Unit, onNewProject: () -> Unit, onImportProject: () -> Unit, onExportProject: (File) -> Unit, onOpen: (File) -> Unit, onNew: () -> Unit, onImport: () -> Unit, onImportResource: () -> Unit, onDelete: (File) -> Unit, onDeleteResource: (File) -> Unit, onTrashChanged: () -> Unit, onRename: (File, String) -> Unit, onDuplicate: (File) -> Unit, onShare: (File) -> Unit, onAutomations: () -> Unit) {
     var renameTarget by remember { mutableStateOf<File?>(null) }
     var packages by remember { mutableStateOf(false) }
     var trash by remember { mutableStateOf(false) }
@@ -624,6 +649,7 @@ class MainActivity : ComponentActivity() {
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { Text("PROYECTOS", fontWeight = FontWeight.Black, fontSize = 30.sp); Text("Tus archivos, módulos y recursos locales.", fontWeight = FontWeight.Medium); Spacer(Modifier.height(10.dp)); Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { projects.forEach { project -> Surface(onClick = { onProject(project) }, modifier = Modifier.testTag("project-${project.name}"), color = if (project == selectedProject) Yellow else Color.White, border = BorderStroke(3.dp, Ink), shape = RoundedCornerShape(0.dp)) { Text("▣ ${project.name}", Modifier.padding(12.dp, 9.dp), fontWeight = FontWeight.Black) } }; Surface(onClick = onNewProject, color = Pink, border = BorderStroke(3.dp, Ink), shape = RoundedCornerShape(0.dp)) { Text("＋ PROYECTO", Modifier.padding(12.dp, 9.dp), fontWeight = FontWeight.Black) } }; Spacer(Modifier.height(12.dp)); Text(selectedProject.name.uppercase(), Modifier.testTag("current-project-name"), fontWeight = FontWeight.Black, fontSize = 18.sp); Spacer(Modifier.height(8.dp)); Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { BrutalButton("＋ ARCHIVO", Pink, Modifier.weight(1f), onClick = onNew); Box(Modifier.weight(1f)) { BrutalButton("MÁS ACCIONES", Blue, Modifier.fillMaxWidth()) { projectActions = true }; DropdownMenu(expanded = projectActions, onDismissRequest = { projectActions = false }) { DropdownMenuItem(text = { Text("Importar archivo .py") }, onClick = { projectActions = false; onImport() }, leadingIcon = { Icon(Icons.Outlined.FileOpen, null) }); DropdownMenuItem(text = { Text("Añadir recurso") }, onClick = { projectActions = false; onImportResource() }, leadingIcon = { Icon(Icons.Outlined.AttachFile, null) }); DropdownMenuItem(text = { Text("Importar proyecto ZIP") }, onClick = { projectActions = false; onImportProject() }, leadingIcon = { Icon(Icons.Outlined.FolderZip, null) }); DropdownMenuItem(text = { Text("Exportar proyecto ZIP") }, onClick = { projectActions = false; onExportProject(selectedProject) }, leadingIcon = { Icon(Icons.Outlined.Archive, null) }); DropdownMenuItem(text = { Text("Librerías incluidas") }, onClick = { projectActions = false; packages = true }, leadingIcon = { Icon(Icons.Outlined.Extension, null) }); DropdownMenuItem(text = { Text("Papelera") }, onClick = { projectActions = false; trash = true }, leadingIcon = { Icon(Icons.Outlined.Delete, null) }) } } } }
+        item { BrutalButton("⚙ AUTOMATIZACIONES", Green, Modifier.fillMaxWidth().testTag("open-automations"), onClick = onAutomations) }
         items(files, key = { it.path }) { file ->
             BrutalCard(if (file == current) Blue else Color.White) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
