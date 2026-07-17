@@ -11,6 +11,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
+internal const val AUTOMATION_RESULT_NOT_UPDATED_ERROR =
+    "El script terminó correctamente, pero no generó ni actualizó el archivo de resultado configurado."
+
 class AutomationWorker(
     appContext: Context,
     workerParameters: WorkerParameters,
@@ -56,6 +59,7 @@ class AutomationWorker(
                         output = value.callAttr("get", "output").toString(),
                         errorType = value.callAttr("get", "error_type").toString(),
                         errorMessage = value.callAttr("get", "error_message").toString(),
+                        files = value.callAttr("get", "files").asList().map { it.toString() },
                     )
                 }
             }
@@ -65,13 +69,27 @@ class AutomationWorker(
                 app.automationScheduler.scheduleAfterRun(id, appendToCurrentChain = !manualRun)
                 Result.success()
             } else {
-                val artifact = paths.highlightedResult?.let { resultFile ->
+                val resultWasUpdated = paths.highlightedResult?.let { resultFile ->
                     withContext(Dispatchers.IO) {
-                        PublishedArtifactPublisher(applicationContext.filesDir)
-                            .publish(automation, resultFile)
+                        val configuredResult = resultFile.canonicalFile
+                        execution.files.any { generatedPath ->
+                            runCatching { File(generatedPath).canonicalFile == configuredResult }
+                                .getOrDefault(false)
+                        }
                     }
+                } ?: true
+
+                if (!resultWasUpdated) {
+                    markError(repository, id, AUTOMATION_RESULT_NOT_UPDATED_ERROR)
+                } else {
+                    val artifact = paths.highlightedResult?.let { resultFile ->
+                        withContext(Dispatchers.IO) {
+                            PublishedArtifactPublisher(applicationContext.filesDir)
+                                .publish(automation, resultFile)
+                        }
+                    }
+                    markSuccess(repository, id, execution.output, artifact)
                 }
-                markSuccess(repository, id, execution.output, artifact)
                 app.automationScheduler.scheduleAfterRun(id, appendToCurrentChain = !manualRun)
                 Result.success()
             }
@@ -129,6 +147,7 @@ class AutomationWorker(
         val output: String,
         val errorType: String,
         val errorMessage: String,
+        val files: List<String>,
     ) {
         fun summary(): String = sequenceOf(output, listOf(errorType, errorMessage).filter { it.isNotBlank() }.joinToString(": "))
             .filter { it.isNotBlank() }

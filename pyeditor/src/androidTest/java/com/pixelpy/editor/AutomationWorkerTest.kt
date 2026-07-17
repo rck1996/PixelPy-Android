@@ -68,6 +68,42 @@ class AutomationWorkerTest {
     }
 
     @Test
+    fun successfulRunWithoutUpdatingConfiguredResultPreservesLastPublication() = runBlocking {
+        val id = UUID.randomUUID().toString().also(createdIds::add)
+        val project = File(app.projectsRoot, "Automation-$id").apply { mkdirs() }.also(createdProjects::add)
+        val script = File(project, "main.py")
+        val result = File(project, "result.txt")
+        script.writeText(
+            "from pathlib import Path\n" +
+                "Path('result.txt').write_text('first', encoding='utf-8')\n" +
+                "print('first run')\n"
+        )
+        app.automationRepository.upsert(automation(id, project.name, result = "result.txt"))
+
+        assertTrue(runWorker(id) is ListenableWorker.Result.Success)
+        val first = requireNotNull(app.automationRepository.get(id))
+        val firstPublishedAt = requireNotNull(first.publishedAtMillis)
+        val published = AutomationPathValidator.resolvePublished(
+            context.filesDir,
+            requireNotNull(first.publishedArtifactPath),
+        )
+        assertEquals("first", published.readText())
+
+        script.writeText("print('ok')\n")
+        assertTrue(runWorker(id) is ListenableWorker.Result.Success)
+
+        val stale = requireNotNull(app.automationRepository.get(id))
+        assertEquals(AutomationRunStatus.Error, stale.lastStatus)
+        assertEquals("first", result.readText())
+        assertEquals("first", published.readText())
+        assertEquals(first.publishedArtifactPath, stale.publishedArtifactPath)
+        assertEquals(firstPublishedAt, stale.publishedAtMillis)
+        assertEquals(first.publishedSizeBytes, stale.publishedSizeBytes)
+        assertEquals(first.publishedMimeType, stale.publishedMimeType)
+        assertTrue(stale.summary.contains(AUTOMATION_RESULT_NOT_UPDATED_ERROR))
+    }
+
+    @Test
     fun inputFailsImmediatelyWithoutInteraction() = runBlocking {
         val id = UUID.randomUUID().toString().also(createdIds::add)
         val project = File(app.projectsRoot, "Automation-$id").apply { mkdirs() }.also(createdProjects::add)
@@ -100,6 +136,7 @@ class AutomationWorkerTest {
         release.complete(Unit)
         manual.await()
         assertTrue(worker.await() is ListenableWorker.Result.Success)
+        assertEquals(AutomationRunStatus.Success, requireNotNull(app.automationRepository.get(id)).lastStatus)
     }
 
     private suspend fun runWorker(id: String): ListenableWorker.Result =
