@@ -43,31 +43,47 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 internal const val EXTRA_AUTOMATION_ID = "com.pixelpy.editor.extra.AUTOMATION_ID"
+internal const val AUTOMATION_WITHOUT_RESULT_NOTICE =
+    "Esta automatización no publica un archivo. El botón EJECUTAR funcionará, pero ABRIR permanecerá deshabilitado."
+
+internal enum class AutomationWidgetStatus(
+    val label: String,
+    val backgroundRes: Int,
+) {
+    Pending("PENDIENTE", R.drawable.automation_widget_status_pending),
+    Running("EJECUTANDO", R.drawable.automation_widget_status_running),
+    Success("CORRECTO", R.drawable.automation_widget_status_success),
+    Error("ERROR", R.drawable.automation_widget_status_error),
+    Paused("PAUSADA", R.drawable.automation_widget_status_paused),
+    Unavailable("Automatización no disponible", R.drawable.automation_widget_status_error),
+}
 
 internal data class AutomationWidgetState(
     val name: String,
-    val status: String,
+    val status: AutomationWidgetStatus,
     val updated: String,
     val artifactName: String,
     val canOpen: Boolean,
+    val canRun: Boolean,
 )
 
 internal fun automationWidgetState(automation: ScriptAutomation?): AutomationWidgetState {
     if (automation == null) {
         return AutomationWidgetState(
             name = "PIXELPY",
-            status = "Automatización no disponible",
+            status = AutomationWidgetStatus.Unavailable,
             updated = "Abre PixelPy para configurarla",
             artifactName = "Sin resultado",
             canOpen = false,
+            canRun = false,
         )
     }
     val status = when {
-        !automation.enabled -> "PAUSADA"
-        automation.lastStatus == AutomationRunStatus.Pending -> "PENDIENTE"
-        automation.lastStatus == AutomationRunStatus.Running -> "EJECUTANDO"
-        automation.lastStatus == AutomationRunStatus.Success -> "CORRECTO"
-        else -> "ERROR"
+        !automation.enabled -> AutomationWidgetStatus.Paused
+        automation.lastStatus == AutomationRunStatus.Pending -> AutomationWidgetStatus.Pending
+        automation.lastStatus == AutomationRunStatus.Running -> AutomationWidgetStatus.Running
+        automation.lastStatus == AutomationRunStatus.Success -> AutomationWidgetStatus.Success
+        else -> AutomationWidgetStatus.Error
     }
     val updated = automation.publishedAtMillis?.let {
         "Actualizado ${formatWidgetTime(it)}"
@@ -80,8 +96,12 @@ internal fun automationWidgetState(automation: ScriptAutomation?): AutomationWid
         updated = updated,
         artifactName = automation.publishedArtifactPath?.substringAfterLast('/') ?: "Sin resultado publicado",
         canOpen = automation.publishedArtifactPath != null,
+        canRun = true,
     )
 }
+
+internal fun automationWidgetConfigurationNotice(automation: ScriptAutomation): String? =
+    AUTOMATION_WITHOUT_RESULT_NOTICE.takeIf { automation.highlightedResultPath.isNullOrBlank() }
 
 private fun formatWidgetTime(millis: Long): String = Instant.ofEpochMilli(millis)
     .atZone(ZoneId.systemDefault())
@@ -106,14 +126,6 @@ internal object AutomationWidgetPreferences {
 
 internal fun widgetPendingIntentFlags(): Int =
     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-
-internal fun widgetStatusBackground(status: String): Int = when (status) {
-    "CORRECTO" -> R.drawable.automation_widget_status_success
-    "ERROR", "AutomatizaciÃ³n no disponible" -> R.drawable.automation_widget_status_error
-    "EJECUTANDO" -> R.drawable.automation_widget_status_running
-    "PAUSADA" -> R.drawable.automation_widget_status_paused
-    else -> R.drawable.automation_widget_status_pending
-}
 
 class AutomationWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
@@ -162,16 +174,17 @@ class AutomationWidgetProvider : AppWidgetProvider() {
             val state = automationWidgetState(automation)
             val views = RemoteViews(context.packageName, R.layout.automation_widget).apply {
                 setTextViewText(R.id.widget_name, state.name)
-                setTextViewText(R.id.widget_status, state.status)
+                setTextViewText(R.id.widget_status, state.status.label)
                 setTextViewText(R.id.widget_updated, state.updated)
                 setTextViewText(R.id.widget_artifact, state.artifactName)
-                setInt(R.id.widget_status, "setBackgroundResource", widgetStatusBackground(state.status))
+                setInt(R.id.widget_status, "setBackgroundResource", state.status.backgroundRes)
                 setTextColor(R.id.widget_open, if (state.canOpen) 0xFF191919.toInt() else 0xFF9A9489.toInt())
                 if (id != null) {
                     setOnClickPendingIntent(R.id.widget_open, actionIntent(context, widgetId, id, ACTION_OPEN, 1))
                     setOnClickPendingIntent(R.id.widget_run, actionIntent(context, widgetId, id, ACTION_RUN, 2))
                 }
                 setBoolean(R.id.widget_open, "setEnabled", state.canOpen)
+                setBoolean(R.id.widget_run, "setEnabled", state.canRun)
             }
             manager.updateAppWidget(widgetId, views)
         }
@@ -271,6 +284,9 @@ private fun WidgetAutomationPicker(
                     Column(Modifier.padding(14.dp)) {
                         Text(automation.name, fontWeight = FontWeight.Black)
                         Text("${automation.projectPath}/${automation.scriptPath}", fontSize = 12.sp)
+                        automationWidgetConfigurationNotice(automation)?.let { notice ->
+                            Text(notice, fontSize = 12.sp, color = Color(0xFF6B6457))
+                        }
                     }
                 }
             }

@@ -45,15 +45,27 @@ class AutomationBridgeAndWidgetTest {
     @Test
     fun widgetStatesCoverSuccessErrorAndMissingAutomation() {
         val success = automationWidgetState(sample(AutomationRunStatus.Success).copy(publishedArtifactPath = "published/id/report.xlsx"))
-        assertEquals("CORRECTO", success.status)
-        assertEquals(R.drawable.automation_widget_status_success, widgetStatusBackground(success.status))
+        assertEquals(AutomationWidgetStatus.Success, success.status)
+        assertEquals(R.drawable.automation_widget_status_success, success.status.backgroundRes)
         assertTrue(success.canOpen)
         val error = automationWidgetState(sample(AutomationRunStatus.Error))
-        assertEquals("ERROR", error.status)
-        assertEquals(R.drawable.automation_widget_status_error, widgetStatusBackground(error.status))
+        assertEquals(AutomationWidgetStatus.Error, error.status)
+        assertEquals(R.drawable.automation_widget_status_error, error.status.backgroundRes)
         assertFalse(error.canOpen)
         val missing = automationWidgetState(null)
-        assertEquals("Automatización no disponible", missing.status)
+        assertEquals(AutomationWidgetStatus.Unavailable, missing.status)
+        assertEquals(R.drawable.automation_widget_status_error, missing.status.backgroundRes)
+        assertEquals("Automatización no disponible", missing.status.label)
+    }
+
+    @Test
+    fun automationWithoutHighlightedResultKeepsRunAvailableAndOpenDisabled() {
+        val automation = sample(AutomationRunStatus.Pending)
+        val state = automationWidgetState(automation)
+
+        assertFalse(state.canOpen)
+        assertTrue(state.canRun)
+        assertEquals(AUTOMATION_WITHOUT_RESULT_NOTICE, automationWidgetConfigurationNotice(automation))
     }
 
     @Test
