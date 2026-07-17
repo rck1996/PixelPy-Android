@@ -12,6 +12,8 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 - Importación y exportación de proyectos ZIP.
 - Incluye `requests`, `beautifulsoup4`, `openpyxl` y `defusedxml`.
 - Autosave seguro con recuperación de proyecto, archivo, pestaña y cursor.
+- Automatizaciones únicas, diarias o semanales mediante WorkManager, con restricciones de red, carga y batería.
+- Publicación segura de resultados y widget para consultar el estado, ejecutar el script y abrir el último archivo generado.
 - Interfaz neobrutalista optimizada para teclado móvil.
 
 ## Capturas
@@ -20,6 +22,11 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
   <img src="docs/screenshots/projects.png" alt="Gestor de proyectos de PixelPy" width="31%" />
   <img src="docs/screenshots/editor.png" alt="Editor multifichero de PixelPy" width="31%" />
   <img src="docs/screenshots/console.png" alt="Consola de ejecución de PixelPy" width="31%" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/automation.png" alt="Configuración de automatizaciones de PixelPy" width="46%" />
+  <img src="docs/screenshots/widget.png" alt="Widget de resultados de PixelPy" width="46%" />
 </p>
 
 ## Requisitos
@@ -39,8 +46,10 @@ El APK se genera en `pyeditor/build/outputs/apk/development/debug/`.
 
 ## Versión
 
-La primera versión estable es `1.0.0`.
+La versión actual es `1.1.0`. Incorpora scripts programados, ejecución manual desde Automatizaciones, publicación atómica de resultados y un widget para la pantalla principal.
+
+Las ejecuciones programadas son aproximadas: Android puede retrasarlas por batería, Doze o restricciones del sistema.
 
 ## Privacidad
 
-Los proyectos se guardan localmente. PixelPy solo usa Internet cuando un script del usuario realiza una solicitud de red.
+Los proyectos, automatizaciones y resultados publicados se guardan localmente. PixelPy solo usa Internet cuando un script del usuario realiza una solicitud de red.
