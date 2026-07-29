@@ -5,22 +5,22 @@
     android:layout_height="match_parent"
     android:background="@drawable/automation_widget_background"
     android:orientation="vertical"
-    android:padding="9dp">
+    android:padding="10dp">
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="36dp"
+        android:layout_height="38dp"
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
         <TextView
-            android:layout_width="32dp"
-            android:layout_height="32dp"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
             android:background="@drawable/automation_widget_logo_background"
             android:gravity="center"
-            android:text="P_"
+            android:text="P›"
             android:textColor="#FFD43B"
-            android:textSize="13sp"
+            android:textSize="14sp"
             android:textStyle="bold" />
 
         <LinearLayout
@@ -80,7 +80,7 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="7dp"
+        android:layout_marginTop="6dp"
         android:layout_weight="1"
         android:background="@drawable/automation_widget_artifact_background"
         android:gravity="center_vertical"
@@ -94,7 +94,7 @@
             android:id="@+id/widget_section_label"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="ÚLTIMO RESULTADO"
+            android:text="●  RESULTADO PUBLICADO"
             android:textColor="#6B6457"
             android:textSize="8sp"
             android:textStyle="bold" />
@@ -109,6 +109,17 @@
             android:textColor="#191919"
             android:textSize="11sp"
             android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_artifact_meta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="24 KB · copia segura"
+            android:textColor="#6B6457"
+            android:textSize="8sp" />
     </LinearLayout>
 
     <LinearLayout
@@ -124,7 +135,7 @@
             android:layout_weight="1"
             android:background="@drawable/automation_widget_button_secondary"
             android:gravity="center"
-            android:text="ABRIR"
+            android:text="VER RESULTADO"
             android:textColor="#191919"
             android:textSize="10sp"
             android:textStyle="bold" />

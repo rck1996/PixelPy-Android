@@ -10,6 +10,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.io.File
 
 class AutomationBridgeAndWidgetTest {
     @Test
@@ -99,6 +100,29 @@ class AutomationBridgeAndWidgetTest {
     fun widgetPendingIntentsAreImmutable() {
         assertTrue(widgetPendingIntentFlags() and PendingIntent.FLAG_IMMUTABLE != 0)
         assertTrue(widgetPendingIntentFlags() and PendingIntent.FLAG_MUTABLE == 0)
+    }
+
+    @Test
+    fun publishedPreviewChoosesSafeInternalFormats() {
+        assertEquals(PublishedPreviewKind.Json, previewKind(File("report.json")))
+        assertEquals(PublishedPreviewKind.Csv, previewKind(File("report.csv")))
+        assertEquals(PublishedPreviewKind.Image, previewKind(File("chart.png")))
+        assertEquals(PublishedPreviewKind.External, previewKind(File("report.xlsx")))
+        assertEquals("1.5 MB", humanFileSize(1_572_864))
+    }
+
+    @Test
+    fun widgetShowsPublishedFileSizeAndSafeCopy() {
+        val state = automationWidgetState(
+            sample(AutomationRunStatus.Success).copy(
+                publishedArtifactPath = "published/id/report.csv",
+                publishedSizeBytes = 2_048,
+            )
+        )
+
+        assertEquals("report.csv", state.artifactName)
+        assertEquals("2 KB · copia segura", state.artifactMeta)
+        assertTrue(state.canOpen)
     }
 
     private fun sample(status: AutomationRunStatus) = ScriptAutomation(
