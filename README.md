@@ -51,6 +51,8 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
   <img src="docs/screenshots/notebook-mvp.png" alt="Notebook local de PixelPy ejecutándose en Android" width="46%" />
 </p>
 
+Consulta el flujo, Markdown compatible y límites del MVP en [Notebook local](docs/notebook.md).
+
 ## Resultados publicados
 
 El botón **VER RESULTADO** del widget, **ABRIR RESULTADO** en automatizaciones y **VER RESULTADO** en la consola llevan al mismo visor:
