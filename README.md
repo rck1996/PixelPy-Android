@@ -23,6 +23,7 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 - Plantillas favoritas para APIs, CSV, Excel, gráficos, scraping y automatizaciones.
 - Gestor de recursos con carpetas visibles aunque estén vacías, importación al destino elegido, selección múltiple, movimiento y renombrado seguros, rutas relativas copiables, papelera y vista previa.
 - Al mover o renombrar un resultado destacado, PixelPy actualiza automáticamente la automatización que lo utiliza.
+- Notebook local por proyecto con celdas Python y Markdown, variables compartidas en orden, ejecución individual o completa, salida y duración por celda, reordenamiento y guardado automático.
 - Tema oscuro, contraste alto y tres densidades de interfaz.
 - Diagnóstico de automatizaciones con historial local, causa visible en el widget, reintento y copia del reporte.
 - Interfaz neobrutalista optimizada para teclado móvil.
@@ -47,6 +48,7 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 
 <p align="center">
   <img src="docs/screenshots/premium-tools.png" alt="Plantillas, accesibilidad y herramientas premium de PixelPy" width="46%" />
+  <img src="docs/screenshots/notebook-mvp.png" alt="Notebook local de PixelPy ejecutándose en Android" width="46%" />
 </p>
 
 ## Resultados publicados
@@ -85,7 +87,7 @@ El APK se genera en `pyeditor/build/outputs/apk/development/debug/`.
 
 ## Versión
 
-La próxima versión es `1.4.0`. Completa la fase premium previa al modo Notebook con parámetros visuales, historial detallado, Excel con varias hojas, Plotly, plantillas, consola filtrable, gestión de recursos y accesibilidad.
+La versión estable actual es `1.4.0`. El modo Notebook se desarrolla por separado para poder probarlo en el teléfono antes de publicarlo.
 
 Las ejecuciones programadas son aproximadas: Android puede retrasarlas por batería, Doze o restricciones del sistema.
 
