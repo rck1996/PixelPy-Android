@@ -14,6 +14,7 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 - Autosave seguro con recuperación de proyecto, archivo, pestaña y cursor.
 - Automatizaciones únicas, diarias o semanales mediante WorkManager, con restricciones de red, carga y batería.
 - Publicación segura de resultados y widget para consultar el estado, ejecutar el script y abrir el último archivo generado.
+- Diagnóstico de automatizaciones con historial local, causa visible en el widget, reintento y copia del reporte.
 - Interfaz neobrutalista optimizada para teclado móvil.
 
 ## Capturas
@@ -46,7 +47,7 @@ El APK se genera en `pyeditor/build/outputs/apk/development/debug/`.
 
 ## Versión
 
-La versión actual es `1.1.0`. Incorpora scripts programados, ejecución manual desde Automatizaciones, publicación atómica de resultados y un widget para la pantalla principal.
+La versión actual es `1.2.0`. Añade diagnósticos accionables, historial local de ejecuciones y pruebas del Worker desde el editor, además de las automatizaciones y el widget introducidos en `1.1.0`.
 
 Las ejecuciones programadas son aproximadas: Android puede retrasarlas por batería, Doze o restricciones del sistema.
 
