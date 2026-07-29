@@ -7,12 +7,26 @@ import java.time.ZonedDateTime
 import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 
-internal const val AUTOMATION_STORE_VERSION = 1
+internal const val AUTOMATION_STORE_VERSION = 2
 internal const val MAX_AUTOMATION_TIMEOUT_SECONDS = 120
 internal const val MAX_AUTOMATION_SUMMARY_LENGTH = 4_000
+internal const val MAX_AUTOMATION_HISTORY = 10
+internal const val MAX_AUTOMATION_GENERATED_FILES = 20
 
 internal enum class AutomationScheduleType { Once, Daily, Weekly }
 internal enum class AutomationRunStatus { Pending, Running, Success, Error }
+internal enum class AutomationRunOrigin { Scheduled, App, Widget, EditorTest }
+
+internal data class AutomationRunRecord(
+    val startedAtMillis: Long,
+    val finishedAtMillis: Long,
+    val durationMillis: Long,
+    val origin: AutomationRunOrigin,
+    val status: AutomationRunStatus,
+    val summary: String,
+    val generatedFiles: List<String> = emptyList(),
+    val resultPublished: Boolean = false,
+)
 
 internal data class ScriptAutomation(
     val id: String = UUID.randomUUID().toString(),
@@ -38,6 +52,7 @@ internal data class ScriptAutomation(
     val publishedAtMillis: Long? = null,
     val publishedSizeBytes: Long? = null,
     val publishedMimeType: String? = null,
+    val runHistory: List<AutomationRunRecord> = emptyList(),
 ) {
     init {
         require(id.isNotBlank())

@@ -25,6 +25,9 @@ class AutomationWorker(
         val automation = repository.get(id) ?: return Result.success()
         if (!automation.enabled) return Result.success()
         val manualRun = inputData.getBoolean(KEY_MANUAL_RUN, false)
+        val origin = runCatching {
+            enumValueOf<AutomationRunOrigin>(inputData.getString(KEY_RUN_ORIGIN).orEmpty())
+        }.getOrDefault(if (manualRun) AutomationRunOrigin.App else AutomationRunOrigin.Scheduled)
 
         val startedAt = System.currentTimeMillis()
         repository.update(id) {
@@ -63,9 +66,19 @@ class AutomationWorker(
                     )
                 }
             }
+            val generatedFiles = withContext(Dispatchers.IO) {
+                val projectRoot = paths.project.canonicalFile.toPath()
+                execution.files.mapNotNull { path ->
+                    runCatching { File(path).canonicalFile.toPath() }.getOrNull()
+                        ?.takeIf { it.startsWith(projectRoot) }
+                        ?.let { projectRoot.relativize(it).toString().replace('\\', '/') }
+                }.distinct().take(MAX_AUTOMATION_GENERATED_FILES)
+            }
 
             if (!execution.ok) {
-                markError(repository, id, execution.summary())
+                val summary = execution.summary()
+                markError(repository, id, summary)
+                appendHistory(repository, id, startedAt, origin, AutomationRunStatus.Error, summary, generatedFiles, false)
                 app.automationScheduler.scheduleAfterRun(id, appendToCurrentChain = !manualRun)
                 Result.success()
             } else {
@@ -81,6 +94,7 @@ class AutomationWorker(
 
                 if (!resultWasUpdated) {
                     markError(repository, id, AUTOMATION_RESULT_NOT_UPDATED_ERROR)
+                    appendHistory(repository, id, startedAt, origin, AutomationRunStatus.Error, AUTOMATION_RESULT_NOT_UPDATED_ERROR, generatedFiles, false)
                 } else {
                     val artifact = paths.highlightedResult?.let { resultFile ->
                         withContext(Dispatchers.IO) {
@@ -88,7 +102,9 @@ class AutomationWorker(
                                 .publish(automation, resultFile)
                         }
                     }
+                    val summary = execution.output.ifBlank { "Ejecución completada correctamente." }
                     markSuccess(repository, id, execution.output, artifact)
+                    appendHistory(repository, id, startedAt, origin, AutomationRunStatus.Success, summary, generatedFiles, artifact != null)
                 }
                 app.automationScheduler.scheduleAfterRun(id, appendToCurrentChain = !manualRun)
                 Result.success()
@@ -103,11 +119,13 @@ class AutomationWorker(
                     ) else current
                 }
                 AutomationWidgetProvider.updateForAutomation(applicationContext, id)
+                appendHistory(repository, id, startedAt, origin, AutomationRunStatus.Error, "Ejecución cancelada por Android o por el usuario.", emptyList(), false)
             }
             throw cancelled
         } catch (error: Exception) {
             markError(repository, id, error.message ?: error::class.java.simpleName)
             app.automationScheduler.scheduleAfterRun(id, appendToCurrentChain = !manualRun)
+            appendHistory(repository, id, startedAt, origin, AutomationRunStatus.Error, error.message ?: error::class.java.simpleName, emptyList(), false)
             Result.success()
         } finally {
             bridge.cancel()
@@ -142,6 +160,30 @@ class AutomationWorker(
         }
     }
 
+    private fun appendHistory(
+        repository: AutomationRepository,
+        id: String,
+        startedAt: Long,
+        origin: AutomationRunOrigin,
+        status: AutomationRunStatus,
+        summary: String,
+        generatedFiles: List<String>,
+        resultPublished: Boolean,
+    ) {
+        val finishedAt = System.currentTimeMillis()
+        val record = AutomationRunRecord(
+            startedAtMillis = startedAt,
+            finishedAtMillis = finishedAt,
+            durationMillis = (finishedAt - startedAt).coerceAtLeast(0L),
+            origin = origin,
+            status = status,
+            summary = summary.ifBlank { status.name }.limitedAutomationSummary(),
+            generatedFiles = generatedFiles.take(MAX_AUTOMATION_GENERATED_FILES),
+            resultPublished = resultPublished,
+        )
+        repository.update(id) { it.copy(runHistory = (it.runHistory + record).takeLast(MAX_AUTOMATION_HISTORY)) }
+    }
+
     private data class PythonAutomationResult(
         val ok: Boolean,
         val output: String,
@@ -158,5 +200,6 @@ class AutomationWorker(
     companion object {
         const val KEY_AUTOMATION_ID = "automation_id"
         const val KEY_MANUAL_RUN = "manual_run"
+        const val KEY_RUN_ORIGIN = "run_origin"
     }
 }

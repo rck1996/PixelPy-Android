@@ -48,8 +48,13 @@ class AutomationWorkerTest {
         script.writeText("from pathlib import Path\nPath('result.txt').write_text('first', encoding='utf-8')\nprint('first run')\n")
         app.automationRepository.upsert(automation(id, project.name, result = "result.txt"))
 
-        assertTrue(runWorker(id) is ListenableWorker.Result.Success)
+        assertTrue(runWorker(id, AutomationRunOrigin.Widget) is ListenableWorker.Result.Success)
         val first = requireNotNull(app.automationRepository.get(id))
+        val firstHistory = first.runHistory.single()
+        assertEquals(AutomationRunOrigin.Widget, firstHistory.origin)
+        assertEquals(AutomationRunStatus.Success, firstHistory.status)
+        assertTrue(firstHistory.durationMillis >= 0)
+        assertTrue("result.txt" in firstHistory.generatedFiles)
         val published = AutomationPathValidator.resolvePublished(context.filesDir, requireNotNull(first.publishedArtifactPath))
         assertEquals("first", published.readText())
         val uri = FileProvider.getUriForFile(context, "com.pixelpy.editor.files", published)
@@ -65,6 +70,8 @@ class AutomationWorkerTest {
         val failed = requireNotNull(app.automationRepository.get(id))
         assertEquals(AutomationRunStatus.Error, failed.lastStatus)
         assertEquals("second", published.readText())
+        assertEquals(3, failed.runHistory.size)
+        assertEquals(AutomationRunStatus.Error, failed.runHistory.last().status)
     }
 
     @Test
@@ -101,6 +108,9 @@ class AutomationWorkerTest {
         assertEquals(first.publishedSizeBytes, stale.publishedSizeBytes)
         assertEquals(first.publishedMimeType, stale.publishedMimeType)
         assertTrue(stale.summary.contains(AUTOMATION_RESULT_NOT_UPDATED_ERROR))
+        assertEquals(2, stale.runHistory.size)
+        assertEquals(AutomationRunStatus.Error, stale.runHistory.last().status)
+        assertFalse(stale.runHistory.last().resultPublished)
     }
 
     @Test
@@ -113,6 +123,8 @@ class AutomationWorkerTest {
         val stored = requireNotNull(app.automationRepository.get(id))
         assertEquals(AutomationRunStatus.Error, stored.lastStatus)
         assertTrue(stored.summary.contains(AUTOMATION_INPUT_ERROR))
+        assertEquals(AutomationRunStatus.Error, stored.runHistory.single().status)
+        assertTrue(stored.runHistory.single().summary.contains(AUTOMATION_INPUT_ERROR))
     }
 
     @Test
@@ -139,9 +151,15 @@ class AutomationWorkerTest {
         assertEquals(AutomationRunStatus.Success, requireNotNull(app.automationRepository.get(id)).lastStatus)
     }
 
-    private suspend fun runWorker(id: String): ListenableWorker.Result =
+    private suspend fun runWorker(
+        id: String,
+        origin: AutomationRunOrigin = AutomationRunOrigin.Scheduled,
+    ): ListenableWorker.Result =
         TestListenableWorkerBuilder<AutomationWorker>(context)
-            .setInputData(workDataOf(AutomationWorker.KEY_AUTOMATION_ID to id))
+            .setInputData(workDataOf(
+                AutomationWorker.KEY_AUTOMATION_ID to id,
+                AutomationWorker.KEY_RUN_ORIGIN to origin.name,
+            ))
             .build()
             .doWork()
 
