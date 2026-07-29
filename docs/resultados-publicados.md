@@ -12,13 +12,23 @@ PixelPy separa el archivo de trabajo del resultado publicado. Al terminar correc
 
 El widget nunca abre directamente el archivo que está escribiendo el script.
 
+## Ejecuciones normales
+
+La consola reúne los archivos creados o actualizados en una galería horizontal, manteniendo visibles la salida y las acciones principales. Cada resultado ofrece:
+
+- **VER RESULTADO:** abre la misma vista previa integrada.
+- **GUARDAR:** exporta una copia mediante el selector de Android.
+- **COMPARTIR:** entrega el archivo a otra aplicación.
+
+En este caso PixelPy abre el archivo actual del proyecto. La copia estable en `published/` se reserva para automatizaciones y widgets.
+
 ## Vista previa
 
 | Formato | Comportamiento |
 | --- | --- |
 | TXT, LOG, Markdown, XML | Vista de texto monoespaciada |
-| JSON | Vista indentada cuando el JSON es válido |
-| CSV | Primeras 200 líneas |
+| JSON | Árbol interactivo con objetos y listas plegables y tipos diferenciados por color |
+| CSV | Tabla con encabezados, filas alternadas y hasta 200 registros |
 | PNG, JPG, JPEG, WebP | Vista de imagen |
 | PDF, XLS, XLSX, ZIP y otros | Información del archivo y apertura con otra aplicación |
 

@@ -10,6 +10,7 @@ import androidx.core.content.FileProvider
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -469,6 +470,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    fun viewGeneratedFile(file: File) {
+        val relative = runCatching {
+            file.canonicalFile.relativeTo(projectsRoot.canonicalFile).invariantSeparatorsPath
+        }.getOrNull() ?: run {
+            android.widget.Toast.makeText(context, "El resultado no pertenece al proyecto", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        context.startActivity(Intent(context, PublishedResultActivity::class.java).apply {
+            putExtra(EXTRA_PROJECT_RESULT_PATH, "projects/$relative")
+        })
+    }
+
     fun testCurrentAsAutomation() {
         transition {
             if (!flushPendingSave(current)) return@transition
@@ -624,7 +637,7 @@ class MainActivity : ComponentActivity() {
                                 android.widget.Toast.makeText(context, "El archivo ejecutado ya no existe", android.widget.Toast.LENGTH_SHORT).show()
                             }
                         }
-                    }, onRun = ::runCode, onSave = { exportFile = it; saveLauncher.launch(it.name) }, onShare = ::shareFile)
+                    }, onRun = ::runCode, onView = ::viewGeneratedFile, onSave = { exportFile = it; saveLauncher.launch(it.name) }, onShare = ::shareFile)
                 }
             }
         }
@@ -842,7 +855,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun Console(fileName: String, code: String, output: String, generated: List<File>, history: List<RunRecord>, success: Boolean?, running: Boolean, errorLine: Int?, onBack: () -> Unit, onGoToLine: (Int) -> Unit, onRun: () -> Unit, onSave: (File) -> Unit, onShare: (File) -> Unit) {
+@Composable private fun Console(fileName: String, code: String, output: String, generated: List<File>, history: List<RunRecord>, success: Boolean?, running: Boolean, errorLine: Int?, onBack: () -> Unit, onGoToLine: (Int) -> Unit, onRun: () -> Unit, onView: (File) -> Unit, onSave: (File) -> Unit, onShare: (File) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val report = "PIXELPY LOG\n\nCÓDIGO:\n$code\n\nSALIDA:\n$output"
@@ -863,11 +876,24 @@ class MainActivity : ComponentActivity() {
             BrutalButton("COMPARTIR", Green, Modifier.weight(1f)) { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, report) }, "Compartir log")) }
         }
         if (errorLine != null) { Spacer(Modifier.height(10.dp)); BrutalButton("IR A LÍNEA $errorLine", Pink, Modifier.fillMaxWidth()) { onGoToLine(errorLine) } }
-        generated.forEach { file ->
-            Spacer(Modifier.height(10.dp)); BrutalCard(Blue) {
-                Text("ARCHIVO GENERADO", fontWeight = FontWeight.Black, fontSize = 11.sp)
-                Text(file.name, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp)); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { BrutalButton("GUARDAR", Yellow, Modifier.weight(1f)) { onSave(file) }; BrutalButton("COMPARTIR", Green, Modifier.weight(1f)) { onShare(file) } }
+        if (generated.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text("ARCHIVOS GENERADOS · ${generated.size}", fontWeight = FontWeight.Black, fontSize = 11.sp)
+            Spacer(Modifier.height(6.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(generated, key = { it.path }) { file ->
+                    BrutalCard(Blue, Modifier.width(292.dp)) {
+                        Text(file.name, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, maxLines = 1)
+                        Text(formatBytes(file.length()), fontSize = 10.sp)
+                        Spacer(Modifier.height(7.dp))
+                        BrutalButton("VER RESULTADO", Blue, Modifier.fillMaxWidth()) { onView(file) }
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            BrutalButton("GUARDAR", Yellow, Modifier.weight(1f)) { onSave(file) }
+                            BrutalButton("COMPARTIR", Green, Modifier.weight(1f)) { onShare(file) }
+                        }
+                    }
+                }
             }
         }
         Spacer(Modifier.height(10.dp)); Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { BrutalButton("← EDITAR", Blue, Modifier.weight(1f), onClick = onBack); BrutalButton("↻ REPETIR", Yellow, Modifier.weight(1f), enabled = !running, onClick = onRun) }
