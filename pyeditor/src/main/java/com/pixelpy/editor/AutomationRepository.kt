@@ -61,6 +61,25 @@ internal class AutomationRepository(filesDir: File) {
         true
     }
 
+    fun updateHighlightedResourcePath(
+        projectPath: String,
+        oldPath: String,
+        newPath: String,
+    ): Int = synchronized(lock) {
+        var changed = 0
+        val next = _automations.value.map { automation ->
+            if (
+                automation.projectPath == projectPath &&
+                automation.highlightedResultPath == oldPath
+            ) {
+                changed++
+                automation.copy(highlightedResultPath = newPath)
+            } else automation
+        }
+        if (changed > 0) persistLocked(next)
+        changed
+    }
+
     private fun upsertLocked(automation: ScriptAutomation): ScriptAutomation {
         val next = _automations.value.toMutableList()
         val index = next.indexOfFirst { it.id == automation.id }

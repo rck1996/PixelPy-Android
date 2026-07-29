@@ -21,7 +21,8 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 - Parámetros visuales tipados (texto, número, sí/no y secreto), además de repetición manual con valores temporales.
 - Historial detallado con código, salida, duración, archivos y diferencias reales línea por línea.
 - Plantillas favoritas para APIs, CSV, Excel, gráficos, scraping y automatizaciones.
-- Carpetas de recursos, selección múltiple, movimiento seguro y vista previa.
+- Gestor de recursos con carpetas visibles aunque estén vacías, importación al destino elegido, selección múltiple, movimiento y renombrado seguros, rutas relativas copiables, papelera y vista previa.
+- Al mover o renombrar un resultado destacado, PixelPy actualiza automáticamente la automatización que lo utiliza.
 - Tema oscuro, contraste alto y tres densidades de interfaz.
 - Diagnóstico de automatizaciones con historial local, causa visible en el widget, reintento y copia del reporte.
 - Interfaz neobrutalista optimizada para teclado móvil.

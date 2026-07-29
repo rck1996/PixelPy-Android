@@ -155,6 +155,7 @@ class MainActivity : ComponentActivity() {
     var newDialog by remember { mutableStateOf(false) }
     var newProjectDialog by remember { mutableStateOf(false) }
     var resourceVersion by remember { mutableIntStateOf(0) }
+    var resourceImportFolder by remember { mutableStateOf("") }
     var projectVersion by remember { mutableIntStateOf(0) }
     var replEntries by remember { mutableStateOf<List<ReplEntry>>(emptyList()) }
     var inputBridge by remember { mutableStateOf<InputBridge?>(null) }
@@ -359,12 +360,19 @@ class MainActivity : ComponentActivity() {
             runCatching {
                 withContext(Dispatchers.IO) {
                     val requested = contentName(context, uri).ifBlank { "recurso" }
-                    var target = File(dir, requested)
+                    val importFolder = resourceImportFolder
+                    var target = safeResourceDestination(dir, importFolder, requested)
                     var number = 2
                     while (target.exists()) {
-                        target = File(dir, requested.substringBeforeLast('.', requested) + "_$number" + requested.substringAfterLast('.', "").let { if (it.isBlank()) "" else ".$it" })
+                        target = safeResourceDestination(
+                            dir,
+                            importFolder,
+                            requested.substringBeforeLast('.', requested) + "_$number" +
+                                requested.substringAfterLast('.', "").let { if (it.isBlank()) "" else ".$it" },
+                        )
                         number++
                     }
+                    target.parentFile?.mkdirs()
                     context.contentResolver.openInputStream(uri)!!.use { inputStream ->
                         target.outputStream().use { inputStream.copyTo(it) }
                     }
@@ -612,7 +620,10 @@ class MainActivity : ComponentActivity() {
                             exportFile = zip
                             saveLauncher.launch(zip.name)
                         }
-                    }, onOpen = ::open, onNew = { newDialog = true }, onImport = { importLauncher.launch(arrayOf("text/x-python", "text/plain", "*/*")) }, onImportResource = { resourceLauncher.launch(arrayOf("*/*")) }, onDelete = { file ->
+                    }, onOpen = ::open, onNew = { newDialog = true }, onImport = { importLauncher.launch(arrayOf("text/x-python", "text/plain", "*/*")) }, onImportResource = { folder ->
+                        resourceImportFolder = folder
+                        resourceLauncher.launch(arrayOf("*/*"))
+                    }, onDelete = { file ->
                         transition {
                             if (file.canonicalFile == current.canonicalFile && !flushPendingSave(current)) return@transition
                             if (files.size > 1) {
@@ -627,7 +638,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                    }, onDeleteResource = { file -> if (moveToTrash(file)) resourceVersion++ }, onTrashChanged = { files = dir.listFiles { f -> f.extension == "py" }?.sortedBy { it.name } ?: emptyList(); resourceVersion++ }, onRename = { file, raw ->
+                    }, onDeleteResource = { file -> if (moveToTrash(file, dir)) resourceVersion++ }, onTrashChanged = { files = dir.listFiles { f -> f.extension == "py" }?.sortedBy { it.name } ?: emptyList(); resourceVersion++ }, onRename = { file, raw ->
                         transition {
                             val renamingCurrent = file.canonicalFile == current.canonicalFile
                             if (renamingCurrent && !flushPendingSave(current)) return@transition
@@ -659,7 +670,18 @@ class MainActivity : ComponentActivity() {
                                 dir.listFiles { candidate -> candidate.extension == "py" }!!.sortedBy { it.name }
                             }
                         }
-                    }, onShare = ::shareFile, onAutomations = { showAutomations = true }, onPreferences = { showPreferences = true }, onPreviewResource = ::viewGeneratedFile, onTemplate = { template ->
+                    }, onShare = ::shareFile, onAutomations = { showAutomations = true }, onPreferences = { showPreferences = true }, onPreviewResource = ::viewGeneratedFile, onResourcePathsChanged = { changes ->
+                        val projectPath = dir.relativeTo(projectsRoot).invariantSeparatorsPath
+                        val changed = changes.entries.sumOf { (oldPath, newPath) ->
+                            app.automationRepository.updateHighlightedResourcePath(projectPath, oldPath, newPath)
+                        }
+                        resourceVersion++
+                        if (changed > 0) android.widget.Toast.makeText(
+                            context,
+                            "$changed automatización(es) actualizada(s)",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }, onTemplate = { template ->
                         transition {
                             if (!flushPendingSave(current)) return@transition
                             val created = withContext(Dispatchers.IO) {
@@ -791,7 +813,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun Projects(projects: List<File>, selectedProject: File, files: List<File>, resources: List<File>, current: File, onProject: (File) -> Unit, onNewProject: () -> Unit, onImportProject: () -> Unit, onExportProject: (File) -> Unit, onOpen: (File) -> Unit, onNew: () -> Unit, onImport: () -> Unit, onImportResource: () -> Unit, onDelete: (File) -> Unit, onDeleteResource: (File) -> Unit, onTrashChanged: () -> Unit, onRename: (File, String) -> Unit, onDuplicate: (File) -> Unit, onShare: (File) -> Unit, onAutomations: () -> Unit, onPreferences: () -> Unit, onPreviewResource: (File) -> Unit, onTemplate: (ScriptTemplate) -> Unit) {
+private fun interface ResourceImporter {
+    fun importInto(folder: String)
+    operator fun invoke(folder: String = "") = importInto(folder)
+}
+
+@Composable private fun Projects(projects: List<File>, selectedProject: File, files: List<File>, resources: List<File>, current: File, onProject: (File) -> Unit, onNewProject: () -> Unit, onImportProject: () -> Unit, onExportProject: (File) -> Unit, onOpen: (File) -> Unit, onNew: () -> Unit, onImport: () -> Unit, onImportResource: ResourceImporter, onDelete: (File) -> Unit, onDeleteResource: (File) -> Unit, onTrashChanged: () -> Unit, onRename: (File, String) -> Unit, onDuplicate: (File) -> Unit, onShare: (File) -> Unit, onAutomations: () -> Unit, onPreferences: () -> Unit, onPreviewResource: (File) -> Unit, onResourcePathsChanged: (Map<String, String>) -> Unit, onTemplate: (ScriptTemplate) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var renameTarget by remember { mutableStateOf<File?>(null) }
     var packages by remember { mutableStateOf(false) }
@@ -799,7 +826,11 @@ class MainActivity : ComponentActivity() {
     var projectActions by remember { mutableStateOf(false) }
     var templates by remember { mutableStateOf(false) }
     var folderDialog by remember { mutableStateOf(false) }
+    var resourceRenameTarget by remember { mutableStateOf<File?>(null) }
+    var resourceActionsTarget by remember { mutableStateOf<File?>(null) }
     var selectedResources by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var selectedResourceFolder by remember(selectedProject) { mutableStateOf("") }
+    val folders = resourceFolders(selectedProject)
     var favorites by remember {
         mutableStateOf(context.getSharedPreferences("pixelpy", 0).getStringSet("favorite_templates", emptySet()).orEmpty())
     }
@@ -818,32 +849,77 @@ class MainActivity : ComponentActivity() {
                 Spacer(Modifier.height(10.dp)); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { BrutalButton(if (file == current) "ABIERTO" else "ABRIR", if (file == current) Green else Yellow, Modifier.weight(1f).testTag("project-open-${file.name}"), onClick = { onOpen(file) }); IconButton(onClick = { renameTarget = file }, Modifier.border(2.dp, Ink)) { Icon(Icons.Outlined.Edit, "Renombrar") }; IconButton(onClick = { onDuplicate(file) }, Modifier.border(2.dp, Ink)) { Icon(Icons.Outlined.ContentCopy, "Duplicar") } }
             }
         }
-        item { Spacer(Modifier.height(4.dp)); Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("RECURSOS", fontWeight = FontWeight.Black, fontSize = 22.sp); Text("Carpetas, selección múltiple y vista previa", fontSize = 12.sp) }; TextButton(onClick = { folderDialog = true }) { Text(if (selectedResources.isEmpty()) "＋ CARPETA" else "MOVER ${selectedResources.size}") }; BrutalButton("＋ AÑADIR", Blue, onClick = onImportResource) } }
-        if (resources.isEmpty()) item { Surface(color = Color.White, border = BorderStroke(2.dp, Ink), shape = RoundedCornerShape(0.dp), modifier = Modifier.fillMaxWidth()) { Text("Este proyecto todavía no tiene archivos de datos.", Modifier.padding(14.dp)) } }
-        items(resources, key = { it.path }) { file ->
+        item {
+            Spacer(Modifier.height(4.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("RECURSOS", fontWeight = FontWeight.Black, fontSize = 22.sp)
+                Text("Carpetas, selección múltiple y vista previa", fontSize = 12.sp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    BrutalButton(if (selectedResources.isEmpty()) "＋ CARPETA" else "MOVER ${selectedResources.size}", Yellow, Modifier.weight(1f)) { folderDialog = true }
+                    BrutalButton("＋ AÑADIR", Blue, Modifier.weight(1f)) { onImportResource(selectedResourceFolder) }
+                }
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(if (selectedResourceFolder.isBlank()) "Destino: raíz del proyecto" else "Destino: $selectedResourceFolder", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = selectedResourceFolder.isBlank(), onClick = { selectedResourceFolder = "" }, label = { Text("RAÍZ") })
+                    folders.forEach { folder ->
+                        val path = resourceRelativePath(selectedProject, folder)
+                        FilterChip(selected = selectedResourceFolder == path, onClick = { selectedResourceFolder = path }, label = { Text("▣ $path") })
+                    }
+                }
+            }
+        }
+        if (resources.isEmpty()) item { Surface(color = Color.White, border = BorderStroke(2.dp, Ink), shape = RoundedCornerShape(0.dp), modifier = Modifier.fillMaxWidth()) { Text(if (folders.isEmpty()) "Este proyecto todavía no tiene archivos de datos." else "Las carpetas están vacías. Elige un destino y añade un recurso.", Modifier.padding(14.dp)) } }
+        items(resources.filter { file ->
+            requireNotNull(file.parentFile).relativeTo(selectedProject).invariantSeparatorsPath.takeUnless { it == "." }.orEmpty() == selectedResourceFolder
+        }, key = { it.path }) { file ->
             BrutalCard(Color.White) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = file.path in selectedResources, onCheckedChange = { checked -> selectedResources = if (checked) selectedResources + file.path else selectedResources - file.path })
                     Box(Modifier.size(44.dp).background(Green).border(2.dp, Ink), contentAlignment = Alignment.Center) { Text(file.extension.uppercase().take(4).ifBlank { "FILE" }, fontWeight = FontWeight.Black, fontSize = 10.sp) }
                     Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) { Text(file.name, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold); Text(formatBytes(file.length()) + " · ${file.relativeTo(selectedProject).invariantSeparatorsPath}", fontSize = 11.sp) }
-                    IconButton(onClick = { clipboard.setText(AnnotatedString(file.name)); android.widget.Toast.makeText(context, "Ruta copiada", android.widget.Toast.LENGTH_SHORT).show() }) { Icon(Icons.Outlined.ContentCopy, "Copiar ruta") }
-                    IconButton(onClick = { onShare(file) }) { Icon(Icons.Outlined.Share, "Compartir") }
                     IconButton(onClick = { onPreviewResource(file) }) { Icon(Icons.Outlined.Visibility, "Vista previa") }
-                    IconButton(onClick = { onDeleteResource(file) }) { Icon(Icons.Outlined.Delete, "Eliminar") }
+                    Box {
+                        IconButton(onClick = { resourceActionsTarget = file }) { Icon(Icons.Outlined.MoreVert, "Más acciones") }
+                        DropdownMenu(expanded = resourceActionsTarget == file, onDismissRequest = { resourceActionsTarget = null }) {
+                            DropdownMenuItem(text = { Text("Copiar ruta relativa") }, onClick = {
+                                clipboard.setText(AnnotatedString(resourceRelativePath(selectedProject, file)))
+                                resourceActionsTarget = null
+                                android.widget.Toast.makeText(context, "Ruta relativa copiada", android.widget.Toast.LENGTH_SHORT).show()
+                            }, leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) })
+                            DropdownMenuItem(text = { Text("Compartir") }, onClick = { resourceActionsTarget = null; onShare(file) }, leadingIcon = { Icon(Icons.Outlined.Share, null) })
+                            DropdownMenuItem(text = { Text("Renombrar") }, onClick = { resourceActionsTarget = null; resourceRenameTarget = file }, leadingIcon = { Icon(Icons.Outlined.Edit, null) })
+                            DropdownMenuItem(text = { Text("Mover a papelera") }, onClick = { resourceActionsTarget = null; onDeleteResource(file) }, leadingIcon = { Icon(Icons.Outlined.Delete, null) })
+                        }
+                    }
                 }
             }
         }
     }
     renameTarget?.let { file -> RenameDialog(file.nameWithoutExtension, onDismiss = { renameTarget = null }) { onRename(file, it); renameTarget = null } }
+    resourceRenameTarget?.let { file ->
+        RenameDialog(file.name, onDismiss = { resourceRenameTarget = null }) { raw ->
+            runCatching { renameResource(selectedProject, file, raw) }
+                .onSuccess { change ->
+                    onResourcePathsChanged(mapOf(change))
+                    resourceRenameTarget = null
+                }
+                .onFailure { android.widget.Toast.makeText(context, it.message ?: "No se pudo renombrar", android.widget.Toast.LENGTH_SHORT).show() }
+        }
+    }
     if (packages) PackagesDialog { packages = false }
     if (trash) TrashDialog(selectedProject, onDismiss = { trash = false }) { onTrashChanged() }
     if (templates) TemplateDialog(favorites, onFavorite = { id ->
         favorites = if (id in favorites) favorites - id else favorites + id
         context.getSharedPreferences("pixelpy", 0).edit().putStringSet("favorite_templates", favorites).apply()
     }, onDismiss = { templates = false }) { template -> templates = false; onTemplate(template) }
-    if (folderDialog) ResourceFolderDialog(selectedProject, selectedResources.map(::File), onDismiss = { folderDialog = false }) {
+    if (folderDialog) ResourceFolderDialog(selectedProject, selectedResources.map(::File), onDismiss = { folderDialog = false }) { changes ->
         selectedResources = emptySet()
         folderDialog = false
+        if (changes.isNotEmpty()) onResourcePathsChanged(changes)
         onTrashChanged()
     }
 }
@@ -1162,10 +1238,10 @@ class MainActivity : ComponentActivity() {
     )
 }
 
-@Composable private fun ResourceFolderDialog(project: File, selected: List<File>, onDismiss: () -> Unit, onDone: () -> Unit) {
+@Composable private fun ResourceFolderDialog(project: File, selected: List<File>, onDismiss: () -> Unit, onDone: (Map<String, String>) -> Unit) {
     var name by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
-    val folders = remember(project) { project.walkTopDown().filter(File::isDirectory).filter { it != project && !it.name.startsWith(".") }.toList() }
+    val folders = remember(project) { resourceFolders(project) }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Blue,
@@ -1180,17 +1256,11 @@ class MainActivity : ComponentActivity() {
         },
         confirmButton = { BrutalButton(if (selected.isEmpty()) "CREAR" else "MOVER", Green, enabled = name.isNotBlank()) {
             runCatching {
-                val safeParts = name.replace('\\', '/').split('/').filter(String::isNotBlank)
-                require(safeParts.isNotEmpty() && safeParts.none { it == ".." || it.startsWith(".") }) { "Nombre de carpeta inválido" }
-                val destination = safeParts.fold(project.canonicalFile) { parent, part -> File(parent, part) }.canonicalFile
-                require(destination.toPath().startsWith(project.canonicalFile.toPath())) { "La carpeta debe quedar dentro del proyecto" }
-                destination.mkdirs()
-                selected.forEach { source ->
-                    val target = File(destination, source.name)
-                    require(!target.exists()) { "Ya existe ${source.name} en esa carpeta" }
-                    require(source.renameTo(target)) { "No se pudo mover ${source.name}" }
-                }
-            }.onSuccess { onDone() }.onFailure { error = it.message ?: "No se pudo completar" }
+                if (selected.isEmpty()) {
+                    createResourceFolder(project, name)
+                    emptyMap()
+                } else moveResources(project, selected, name)
+            }.onSuccess(onDone).onFailure { error = it.message ?: "No se pudo completar" }
         } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("CANCELAR") } },
     )
@@ -1391,8 +1461,8 @@ private fun backupFile(file: File) {
     folder.listFiles()?.sortedByDescending { it.lastModified() }?.drop(20)?.forEach { it.delete() }
 }
 
-private fun moveToTrash(file: File): Boolean {
-    val folder = File(file.parentFile, ".trash").apply { mkdirs() }
+private fun moveToTrash(file: File, project: File = requireNotNull(file.parentFile)): Boolean {
+    val folder = File(project, ".trash").apply { mkdirs() }
     return file.renameTo(File(folder, "${System.currentTimeMillis()}__${file.name}"))
 }
 
