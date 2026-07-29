@@ -61,6 +61,95 @@ def repl_eval(source, working_dir=""):
     return {"ok": ok, "output": output.getvalue()}
 
 
+def notebook_run(sources, working_dir="", timeout_seconds=120):
+    """Run notebook cells in a fresh shared namespace with per-cell output."""
+    try:
+        sources = list(sources)
+    except TypeError:
+        # Chaquopy exposes Kotlin collections as java.util.ArrayList.
+        sources = list(sources.toArray())
+    old_cwd = os.getcwd()
+    old_path = list(sys.path)
+    old_trace = sys.gettrace()
+    original_input = builtins.input
+    work = Path(working_dir).resolve() if working_dir else Path(old_cwd).resolve()
+    namespace = {
+        "__name__": "__pixelpy_notebook__",
+        "__file__": str(work / "notebook.py"),
+        "__builtins__": builtins,
+    }
+    deadline = time.monotonic() + max(5, int(timeout_seconds))
+    before = {}
+    results = []
+
+    def no_notebook_input(prompt=""):
+        raise EOFError("Las celdas de Notebook no pueden solicitar input().")
+
+    def trace_notebook(frame, event, arg):
+        if time.monotonic() > deadline:
+            raise PixelPyStopped(
+                f"El Notebook superó el límite de {timeout_seconds} segundos"
+            )
+        return trace_notebook
+
+    try:
+        work.mkdir(parents=True, exist_ok=True)
+        before = {
+            str(path): path.stat().st_mtime_ns
+            for path in work.rglob("*")
+            if path.is_file()
+        }
+        _clear_project_modules(work)
+        os.chdir(work)
+        if str(work) not in sys.path:
+            sys.path.insert(0, str(work))
+        builtins.input = no_notebook_input
+        sys.settrace(trace_notebook)
+        for index, source in enumerate(sources):
+            output = io.StringIO()
+            started = time.monotonic()
+            ok = True
+            try:
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                    exec(
+                        compile(str(source), f"notebook_cell_{index + 1}.py", "exec"),
+                        namespace,
+                        namespace,
+                    )
+            except BaseException:
+                ok = False
+                output.write(traceback.format_exc())
+            results.append(
+                {
+                    "ok": ok,
+                    "output": output.getvalue(),
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                }
+            )
+            if not ok:
+                break
+    finally:
+        builtins.input = original_input
+        os.chdir(old_cwd)
+        sys.path[:] = old_path
+        sys.settrace(old_trace)
+
+    files = []
+    for path in work.rglob("*"):
+        if not path.is_file() or path.suffix.lower() == ".py":
+            continue
+        try:
+            if str(path) not in before or path.stat().st_mtime_ns != before[str(path)]:
+                files.append(str(path.resolve()))
+        except OSError:
+            continue
+    return {
+        "ok": bool(results) and all(item["ok"] for item in results),
+        "results": results,
+        "files": files,
+    }
+
+
 def _clear_project_modules(work):
     """Remove only imported modules whose files are inside this project."""
     importlib.invalidate_caches()

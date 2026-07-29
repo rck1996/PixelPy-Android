@@ -150,6 +150,7 @@ class MainActivity : ComponentActivity() {
     var lastErrorLine by remember { mutableStateOf<Int?>(null) }
     var tab by remember { mutableStateOf(Tab.valueOf(initialSession.tab)) }
     var showAutomations by rememberSaveable { mutableStateOf(requestedAutomationId != null) }
+    var showNotebook by rememberSaveable { mutableStateOf(false) }
     var automationFocusId by remember { mutableStateOf(requestedAutomationId) }
     var automationFocusRequest by remember { mutableIntStateOf(requestedAutomationRequest) }
     var newDialog by remember { mutableStateOf(false) }
@@ -582,25 +583,31 @@ class MainActivity : ComponentActivity() {
             Row(Modifier.fillMaxWidth().background(Yellow).statusBarsPadding().height(68.dp).border(3.dp, Ink).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(painterResource(R.drawable.pixelpy_brand_mark), "PixelPy", Modifier.size(38.dp), tint = Color.Unspecified)
                 Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) { Text("PIXELPY", fontWeight = FontWeight.Black, fontSize = 21.sp); Text(current.name, Modifier.testTag("current-file-name"), fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
-                if (!showAutomations && (tab == Tab.Editor || running)) {
+                if (!showAutomations && !showNotebook && (tab == Tab.Editor || running)) {
                     if (!running) { BrutalButton("DEBUG", Blue) { runCode(true) }; Spacer(Modifier.width(6.dp)) }
                     BrutalButton(if (running) "■ DETENER" else "▶ EJECUTAR", if (running) Pink else Green, Modifier.testTag("run-button"), onClick = { if (running) stopCode() else runCode(false) })
                 } else {
                     Surface(color = Paper, border = BorderStroke(2.dp, Ink), shape = RoundedCornerShape(0.dp)) {
-                        Text(if (showAutomations) "AUTOMATIZACIONES" else when (tab) { Tab.Projects -> "PROYECTOS"; Tab.Repl -> "REPL"; Tab.Console -> "CONSOLA"; Tab.Editor -> "EDITOR" }, Modifier.padding(horizontal = 10.dp, vertical = 7.dp), fontWeight = FontWeight.Black, fontSize = 10.sp)
+                        Text(if (showNotebook) "NOTEBOOK" else if (showAutomations) "AUTOMATIZACIONES" else when (tab) { Tab.Projects -> "PROYECTOS"; Tab.Repl -> "REPL"; Tab.Console -> "CONSOLA"; Tab.Editor -> "EDITOR" }, Modifier.padding(horizontal = 10.dp, vertical = 7.dp), fontWeight = FontWeight.Black, fontSize = 10.sp)
                     }
                 }
             }
         }, bottomBar = {
             Row(Modifier.fillMaxWidth().background(Ink).navigationBarsPadding().height(68.dp)) {
-                Nav(Tab.Projects, tab, "PROYECTOS", Icons.Outlined.Folder) { showAutomations = false; tab = it }
-                Nav(Tab.Editor, tab, "EDITOR", Icons.Outlined.Code) { showAutomations = false; tab = it }
-                Nav(Tab.Repl, tab, "REPL", Icons.Outlined.DataObject) { showAutomations = false; tab = it }
-                Nav(Tab.Console, tab, "CONSOLA", Icons.Outlined.Terminal) { showAutomations = false; tab = it }
+                Nav(Tab.Projects, tab, "PROYECTOS", Icons.Outlined.Folder) { showAutomations = false; showNotebook = false; tab = it }
+                Nav(Tab.Editor, tab, "EDITOR", Icons.Outlined.Code) { showAutomations = false; showNotebook = false; tab = it }
+                Nav(Tab.Repl, tab, "REPL", Icons.Outlined.DataObject) { showAutomations = false; showNotebook = false; tab = it }
+                Nav(Tab.Console, tab, "CONSOLA", Icons.Outlined.Terminal) { showAutomations = false; showNotebook = false; tab = it }
             }
         }) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
-                if (showAutomations) {
+                if (showNotebook) {
+                    NotebookScreen(
+                        project = dir,
+                        onBack = { showNotebook = false },
+                        onArtifactsChanged = { resourceVersion++ },
+                    )
+                } else if (showAutomations) {
                     AutomationScreen(
                         projectsRoot = projectsRoot,
                         repository = app.automationRepository,
@@ -670,7 +677,7 @@ class MainActivity : ComponentActivity() {
                                 dir.listFiles { candidate -> candidate.extension == "py" }!!.sortedBy { it.name }
                             }
                         }
-                    }, onShare = ::shareFile, onAutomations = { showAutomations = true }, onPreferences = { showPreferences = true }, onPreviewResource = ::viewGeneratedFile, onResourcePathsChanged = { changes ->
+                    }, onShare = ::shareFile, onAutomations = { showAutomations = true }, onNotebook = { showNotebook = true }, onPreferences = { showPreferences = true }, onPreviewResource = ::viewGeneratedFile, onResourcePathsChanged = { changes ->
                         val projectPath = dir.relativeTo(projectsRoot).invariantSeparatorsPath
                         val changed = changes.entries.sumOf { (oldPath, newPath) ->
                             app.automationRepository.updateHighlightedResourcePath(projectPath, oldPath, newPath)
@@ -818,7 +825,7 @@ private fun interface ResourceImporter {
     operator fun invoke(folder: String = "") = importInto(folder)
 }
 
-@Composable private fun Projects(projects: List<File>, selectedProject: File, files: List<File>, resources: List<File>, current: File, onProject: (File) -> Unit, onNewProject: () -> Unit, onImportProject: () -> Unit, onExportProject: (File) -> Unit, onOpen: (File) -> Unit, onNew: () -> Unit, onImport: () -> Unit, onImportResource: ResourceImporter, onDelete: (File) -> Unit, onDeleteResource: (File) -> Unit, onTrashChanged: () -> Unit, onRename: (File, String) -> Unit, onDuplicate: (File) -> Unit, onShare: (File) -> Unit, onAutomations: () -> Unit, onPreferences: () -> Unit, onPreviewResource: (File) -> Unit, onResourcePathsChanged: (Map<String, String>) -> Unit, onTemplate: (ScriptTemplate) -> Unit) {
+@Composable private fun Projects(projects: List<File>, selectedProject: File, files: List<File>, resources: List<File>, current: File, onProject: (File) -> Unit, onNewProject: () -> Unit, onImportProject: () -> Unit, onExportProject: (File) -> Unit, onOpen: (File) -> Unit, onNew: () -> Unit, onImport: () -> Unit, onImportResource: ResourceImporter, onDelete: (File) -> Unit, onDeleteResource: (File) -> Unit, onTrashChanged: () -> Unit, onRename: (File, String) -> Unit, onDuplicate: (File) -> Unit, onShare: (File) -> Unit, onAutomations: () -> Unit, onNotebook: () -> Unit, onPreferences: () -> Unit, onPreviewResource: (File) -> Unit, onResourcePathsChanged: (Map<String, String>) -> Unit, onTemplate: (ScriptTemplate) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var renameTarget by remember { mutableStateOf<File?>(null) }
     var packages by remember { mutableStateOf(false) }
@@ -837,7 +844,12 @@ private fun interface ResourceImporter {
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { Text("PROYECTOS", fontWeight = FontWeight.Black, fontSize = 30.sp); Text("Tus archivos, módulos y recursos locales.", fontWeight = FontWeight.Medium); Spacer(Modifier.height(10.dp)); Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { projects.forEach { project -> Surface(onClick = { onProject(project) }, modifier = Modifier.testTag("project-${project.name}"), color = if (project == selectedProject) Yellow else Color.White, border = BorderStroke(3.dp, Ink), shape = RoundedCornerShape(0.dp)) { Text("▣ ${project.name}", Modifier.padding(12.dp, 9.dp), fontWeight = FontWeight.Black) } }; Surface(onClick = onNewProject, color = Pink, border = BorderStroke(3.dp, Ink), shape = RoundedCornerShape(0.dp)) { Text("＋ PROYECTO", Modifier.padding(12.dp, 9.dp), fontWeight = FontWeight.Black) } }; Spacer(Modifier.height(12.dp)); Text(selectedProject.name.uppercase(), Modifier.testTag("current-project-name"), fontWeight = FontWeight.Black, fontSize = 18.sp); Spacer(Modifier.height(8.dp)); Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { BrutalButton("＋ ARCHIVO", Pink, Modifier.weight(1f), onClick = onNew); Box(Modifier.weight(1f)) { BrutalButton("MÁS ACCIONES", Blue, Modifier.fillMaxWidth()) { projectActions = true }; DropdownMenu(expanded = projectActions, onDismissRequest = { projectActions = false }) { DropdownMenuItem(text = { Text("Plantillas y favoritos") }, onClick = { projectActions = false; templates = true }, leadingIcon = { Icon(Icons.Outlined.Star, null) }); DropdownMenuItem(text = { Text("Apariencia y accesibilidad") }, onClick = { projectActions = false; onPreferences() }, leadingIcon = { Icon(Icons.Outlined.Settings, null) }); DropdownMenuItem(text = { Text("Importar archivo .py") }, onClick = { projectActions = false; onImport() }, leadingIcon = { Icon(Icons.Outlined.FileOpen, null) }); DropdownMenuItem(text = { Text("Añadir recurso") }, onClick = { projectActions = false; onImportResource() }, leadingIcon = { Icon(Icons.Outlined.AttachFile, null) }); DropdownMenuItem(text = { Text("Importar proyecto ZIP") }, onClick = { projectActions = false; onImportProject() }, leadingIcon = { Icon(Icons.Outlined.FolderZip, null) }); DropdownMenuItem(text = { Text("Exportar proyecto ZIP") }, onClick = { projectActions = false; onExportProject(selectedProject) }, leadingIcon = { Icon(Icons.Outlined.Archive, null) }); DropdownMenuItem(text = { Text("Librerías incluidas") }, onClick = { projectActions = false; packages = true }, leadingIcon = { Icon(Icons.Outlined.Extension, null) }); DropdownMenuItem(text = { Text("Papelera") }, onClick = { projectActions = false; trash = true }, leadingIcon = { Icon(Icons.Outlined.Delete, null) }) } } } }
-        item { BrutalButton("⚙ AUTOMATIZACIONES", Green, Modifier.fillMaxWidth().testTag("open-automations"), onClick = onAutomations) }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                BrutalButton("▦ NOTEBOOK", Pink, Modifier.weight(1f).testTag("open-notebook"), onClick = onNotebook)
+                BrutalButton("⚙ AUTOMATIZACIONES", Green, Modifier.weight(1f).testTag("open-automations"), onClick = onAutomations)
+            }
+        }
         items(files, key = { it.path }) { file ->
             BrutalCard(if (file == current) Blue else Color.White) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

@@ -140,6 +140,25 @@ class RunnerTests(unittest.TestCase):
         issue = runner.analyze("if:", "nombre_real.py")[0]
         self.assertTrue(issue.startswith("ERROR|1|"))
 
+    def test_notebook_shares_variables_and_separates_cell_output(self):
+        result = runner.notebook_run(
+            ["x = 21\nprint('primera')", "print(x * 2)"],
+            self.temp.name,
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual("primera", result["results"][0]["output"].strip())
+        self.assertEqual("42", result["results"][1]["output"].strip())
+
+    def test_notebook_input_fails_in_the_requesting_cell(self):
+        result = runner.notebook_run(
+            ["print('antes')", "input('Nombre: ')"],
+            self.temp.name,
+        )
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["results"][0]["ok"])
+        self.assertFalse(result["results"][1]["ok"])
+        self.assertIn("no pueden solicitar input", result["results"][1]["output"])
+
 
 if __name__ == "__main__":
     unittest.main()
