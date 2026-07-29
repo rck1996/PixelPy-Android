@@ -176,6 +176,8 @@ internal class ExecutionSessionStore(filesDir: File) {
 }
 
 internal data class TextComparison(val added: Int, val removed: Int, val unchanged: Int)
+internal enum class DiffKind { Added, Removed, Unchanged }
+internal data class DiffLine(val kind: DiffKind, val text: String)
 
 internal fun compareTextLines(previous: String, current: String): TextComparison {
     val oldCounts = previous.lines().groupingBy(String::trimEnd).eachCount().toMutableMap()
@@ -189,6 +191,27 @@ internal fun compareTextLines(previous: String, current: String): TextComparison
         } else added++
     }
     return TextComparison(added, oldCounts.values.sum(), unchanged)
+}
+
+internal fun lineDiff(previous: String, current: String): List<DiffLine> {
+    val old = previous.lines()
+    val fresh = current.lines()
+    val matrix = Array(old.size + 1) { IntArray(fresh.size + 1) }
+    for (i in old.indices.reversed()) for (j in fresh.indices.reversed()) {
+        matrix[i][j] = if (old[i] == fresh[j]) matrix[i + 1][j + 1] + 1
+        else maxOf(matrix[i + 1][j], matrix[i][j + 1])
+    }
+    val result = mutableListOf<DiffLine>()
+    var i = 0
+    var j = 0
+    while (i < old.size || j < fresh.size) {
+        when {
+            i < old.size && j < fresh.size && old[i] == fresh[j] -> { result += DiffLine(DiffKind.Unchanged, old[i]); i++; j++ }
+            j < fresh.size && (i == old.size || matrix[i][j + 1] >= matrix[i + 1][j]) -> { result += DiffLine(DiffKind.Added, fresh[j]); j++ }
+            else -> { result += DiffLine(DiffKind.Removed, old[i]); i++ }
+        }
+    }
+    return result
 }
 
 private fun writeBytesAtomically(destination: File, content: ByteArray) {

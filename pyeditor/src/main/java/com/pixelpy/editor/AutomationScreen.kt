@@ -46,6 +46,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
@@ -406,8 +408,10 @@ private fun AutomationEditorDialog(
     var battery by remember(initial.id) { mutableStateOf(initial.requiresBatteryNotLow) }
     var timeout by remember(initial.id) { mutableStateOf(initial.timeoutSeconds.toString()) }
     var resultPath by remember(initial.id) { mutableStateOf(initial.highlightedResultPath.orEmpty()) }
-    var parametersText by remember(initial.id) {
-        mutableStateOf(initial.parameters.entries.joinToString("\n") { "${it.key}=${it.value}" })
+    var parameterDefinitions by remember(initial.id) {
+        mutableStateOf(initial.parameterDefinitions.ifEmpty {
+            initial.parameters.map { AutomationParameter(it.key, defaultValue = it.value) }
+        })
     }
     var error by remember { mutableStateOf("") }
     val selectedProject = projects.firstOrNull {
@@ -472,15 +476,44 @@ private fun AutomationEditorDialog(
                 AutomationSwitch("Esperar si la batería está baja", battery) { battery = it }
                 OutlinedTextField(timeout, { timeout = it.filter(Char::isDigit) }, Modifier.fillMaxWidth(), label = { Text("Timeout (5–120 segundos)") }, singleLine = true)
                 OutlinedTextField(resultPath, { resultPath = it }, Modifier.fillMaxWidth(), label = { Text("Resultado destacado opcional") }, supportingText = { Text("Ruta relativa, por ejemplo reporte.xlsx") }, singleLine = true)
-                OutlinedTextField(
-                    parametersText,
-                    { parametersText = it },
-                    Modifier.fillMaxWidth(),
-                    label = { Text("Parámetros guardados") },
-                    supportingText = { Text("Uno por línea: CIUDAD=Santiago. En Python usa os.getenv(\"CIUDAD\").") },
-                    minLines = 2,
-                    maxLines = 5,
-                )
+                Text("PARÁMETROS", fontWeight = FontWeight.Black)
+                Text("Disponibles mediante os.getenv(\"NOMBRE\"). Los secretos permanecen ocultos en pantalla.", fontSize = 11.sp)
+                parameterDefinitions.forEachIndexed { index, parameter ->
+                    Column(Modifier.fillMaxWidth().border(2.dp, AutomationInk).padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutlinedTextField(parameter.name, { value ->
+                                parameterDefinitions = parameterDefinitions.toMutableList().also { it[index] = parameter.copy(name = value.uppercase()) }
+                            }, Modifier.weight(1f), label = { Text("Nombre") }, singleLine = true)
+                            TextButton(onClick = { parameterDefinitions = parameterDefinitions.filterIndexed { position, _ -> position != index } }) { Text("BORRAR") }
+                        }
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            AutomationParameterType.entries.forEach { typeOption ->
+                                FilterChip(selected = parameter.type == typeOption, onClick = {
+                                    parameterDefinitions = parameterDefinitions.toMutableList().also { it[index] = parameter.copy(type = typeOption) }
+                                }, label = { Text(typeOption.parameterLabel()) })
+                            }
+                        }
+                        if (parameter.type == AutomationParameterType.Boolean) {
+                            Row {
+                                FilterChip(parameter.defaultValue == "true", onClick = {
+                                    parameterDefinitions = parameterDefinitions.toMutableList().also { it[index] = parameter.copy(defaultValue = "true") }
+                                }, label = { Text("Verdadero") })
+                                Spacer(Modifier.width(6.dp))
+                                FilterChip(parameter.defaultValue == "false", onClick = {
+                                    parameterDefinitions = parameterDefinitions.toMutableList().also { it[index] = parameter.copy(defaultValue = "false") }
+                                }, label = { Text("Falso") })
+                            }
+                        } else OutlinedTextField(
+                            parameter.defaultValue,
+                            { value -> parameterDefinitions = parameterDefinitions.toMutableList().also { it[index] = parameter.copy(defaultValue = value) } },
+                            Modifier.fillMaxWidth(),
+                            label = { Text("Valor predeterminado") },
+                            singleLine = true,
+                            visualTransformation = if (parameter.type == AutomationParameterType.Secret) PasswordVisualTransformation() else VisualTransformation.None,
+                        )
+                    }
+                }
+                OutlinedButton(onClick = { parameterDefinitions = parameterDefinitions + AutomationParameter("PARAMETRO_${parameterDefinitions.size + 1}") }) { Text("＋ PARÁMETRO") }
                 if (resultCandidates.isNotEmpty()) {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         resultCandidates.forEach { file ->
@@ -504,11 +537,8 @@ private fun AutomationEditorDialog(
                     val limit = timeout.toIntOrNull() ?: MAX_AUTOMATION_TIMEOUT_SECONDS
                     require(limit in 5..MAX_AUTOMATION_TIMEOUT_SECONDS) { "El timeout debe estar entre 5 y 120 segundos" }
                     require(type != AutomationScheduleType.Weekly || weeklyDays.isNotEmpty()) { "Selecciona al menos un día" }
-                    val parameters = parametersText.lineSequence().filter(String::isNotBlank).associate { line ->
-                        val key = line.substringBefore('=').trim()
-                        require('=' in line && key.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "Parámetro inválido: $line" }
-                        key to line.substringAfter('=')
-                    }
+                    require(parameterDefinitions.map { it.name }.distinct().size == parameterDefinitions.size) { "No repitas nombres de parámetros" }
+                    require(parameterDefinitions.all { it.name.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) }) { "Los nombres de parámetros no son válidos" }
                     initial.copy(
                         name = name.trim(),
                         projectPath = projectPath,
@@ -523,7 +553,8 @@ private fun AutomationEditorDialog(
                         requiresBatteryNotLow = battery,
                         timeoutSeconds = limit,
                         highlightedResultPath = resultPath.trim().takeIf(String::isNotBlank),
-                        parameters = parameters,
+                        parameters = emptyMap(),
+                        parameterDefinitions = parameterDefinitions,
                     )
                 }.onSuccess(onSave).onFailure { error = it.message ?: "Datos inválidos" }
             }, modifier = Modifier.testTag("automation-save")) { Text("GUARDAR") }
@@ -554,6 +585,13 @@ private fun AutomationRunStatus.displayName(): String = when (this) {
     AutomationRunStatus.Running -> "EJECUTANDO"
     AutomationRunStatus.Success -> "CORRECTO"
     AutomationRunStatus.Error -> "ERROR"
+}
+
+private fun AutomationParameterType.parameterLabel(): String = when (this) {
+    AutomationParameterType.Text -> "Texto"
+    AutomationParameterType.Number -> "Número"
+    AutomationParameterType.Boolean -> "Sí/No"
+    AutomationParameterType.Secret -> "Secreto"
 }
 
 private fun scheduleDescription(automation: ScriptAutomation): String = when (automation.scheduleType) {

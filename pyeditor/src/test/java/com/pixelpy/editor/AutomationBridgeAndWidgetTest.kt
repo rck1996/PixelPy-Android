@@ -110,6 +110,7 @@ class AutomationBridgeAndWidgetTest {
         assertEquals(PublishedPreviewKind.Markdown, previewKind(File("readme.md")))
         assertEquals(PublishedPreviewKind.Zip, previewKind(File("results.zip")))
         assertEquals(PublishedPreviewKind.Excel, previewKind(File("report.xlsx")))
+        assertEquals(PublishedPreviewKind.Html, previewKind(File("plotly.html")))
         assertEquals("1.5 MB", humanFileSize(1_572_864))
     }
 

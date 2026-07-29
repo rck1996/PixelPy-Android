@@ -9,6 +9,13 @@ import org.junit.Test
 
 class ExecutionSessionStoreTest {
     @Test
+    fun lineDiffKeepsRealAddedAndRemovedLines() {
+        val diff = lineDiff("uno\ndos\ntres", "uno\nDOS\ntres\ncuatro")
+        assertTrue(diff.any { it.kind == DiffKind.Removed && it.text == "dos" })
+        assertTrue(diff.any { it.kind == DiffKind.Added && it.text == "DOS" })
+        assertTrue(diff.any { it.kind == DiffKind.Added && it.text == "cuatro" })
+    }
+    @Test
     fun recordsCopiesPinsAndExportsExecution() {
         val filesDir = createTempDir(prefix = "pixelpy-session-")
         val generated = File(filesDir, "projects/Demo/report.csv").apply {

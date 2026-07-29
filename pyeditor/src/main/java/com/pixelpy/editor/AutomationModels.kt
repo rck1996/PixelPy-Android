@@ -7,7 +7,7 @@ import java.time.ZonedDateTime
 import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 
-internal const val AUTOMATION_STORE_VERSION = 3
+internal const val AUTOMATION_STORE_VERSION = 4
 internal const val MAX_AUTOMATION_TIMEOUT_SECONDS = 120
 internal const val MAX_AUTOMATION_SUMMARY_LENGTH = 4_000
 internal const val MAX_AUTOMATION_HISTORY = 10
@@ -16,6 +16,8 @@ internal const val MAX_AUTOMATION_GENERATED_FILES = 20
 internal enum class AutomationScheduleType { Once, Daily, Weekly }
 internal enum class AutomationRunStatus { Pending, Running, Success, Error }
 internal enum class AutomationRunOrigin { Scheduled, App, Widget, EditorTest }
+internal enum class AutomationParameterType { Text, Number, Boolean, Secret }
+internal data class AutomationParameter(val name: String, val type: AutomationParameterType = AutomationParameterType.Text, val defaultValue: String = "")
 
 internal data class AutomationRunRecord(
     val startedAtMillis: Long,
@@ -45,6 +47,7 @@ internal data class ScriptAutomation(
     val enabled: Boolean = true,
     val highlightedResultPath: String? = null,
     val parameters: Map<String, String> = emptyMap(),
+    val parameterDefinitions: List<AutomationParameter> = emptyList(),
     val lastStatus: AutomationRunStatus = AutomationRunStatus.Pending,
     val lastRunAtMillis: Long? = null,
     val nextRunAtMillis: Long? = null,

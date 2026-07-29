@@ -35,13 +35,16 @@ Cada ejecución manual también crea una sesión local independiente. El histori
 - Markdown se renderiza con títulos, listas y citas.
 - Las imágenes permiten zoom táctil.
 - ZIP muestra hasta 500 entradas sin extraer contenido.
-- Excel muestra una vista básica de las primeras 200 filas de la primera hoja.
+- Excel permite cambiar de hoja, buscar filas, consultar fórmulas y reconocer paneles congelados en las primeras 200 filas.
+- Los HTML generados por Plotly se abren como gráficos interactivos dentro de PixelPy.
 
 Los libros complejos, fórmulas, estilos avanzados y formatos no compatibles pueden abrirse con **OTRA APP**.
 
 ## Parámetros y avisos
 
 Una automatización puede guardar hasta 20 parámetros `CLAVE=valor`. Durante su ejecución están disponibles mediante `os.getenv("CLAVE")` y se eliminan o restauran al terminar. Android solicita permiso para notificaciones al entrar por primera vez a Automatizaciones; al finalizar, el aviso ofrece **VER RESULTADO** cuando existe un archivo publicado.
+
+El editor visual permite definir cada parámetro como texto, número, sí/no o secreto. Las ejecuciones manuales también pueden repetirse con parámetros temporales desde la consola. El historial detallado conserva código, salida, duración y resultados, y muestra diferencias línea por línea frente a la ejecución anterior.
 
 ## Vista previa
 
