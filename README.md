@@ -14,8 +14,10 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 - Autosave seguro con recuperación de proyecto, archivo, pestaña y cursor.
 - Automatizaciones únicas, diarias o semanales mediante WorkManager, con restricciones de red, carga y batería.
 - Publicación segura de resultados y widget para consultar el estado, ejecutar el script y ver el último archivo generado.
-- Visor integrado para texto, Markdown, XML, JSON, CSV e imágenes, con compartir y apertura externa para otros formatos.
+- Visor integrado con búsqueda para texto, Markdown renderizado, JSON plegable, CSV en tabla, zoom de imágenes, explorador ZIP y vista básica de la primera hoja de Excel.
 - Los archivos generados por una ejecución normal aparecen en una galería horizontal y pueden abrirse en el mismo visor directamente desde la consola.
+- Historial persistente de ejecuciones con código, salida y copias de resultados; permite fijar, comparar, borrar y exportar una sesión completa como ZIP.
+- Parámetros guardados por automatización (`CLAVE=valor`) y notificaciones de finalización con acceso directo al resultado.
 - Diagnóstico de automatizaciones con historial local, causa visible en el widget, reintento y copia del reporte.
 - Interfaz neobrutalista optimizada para teclado móvil.
 
@@ -41,11 +43,13 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 
 El botón **VER RESULTADO** del widget, **ABRIR RESULTADO** en automatizaciones y **VER RESULTADO** en la consola llevan al mismo visor:
 
-- TXT, LOG, Markdown y XML se muestran como texto.
+- TXT, LOG y XML se muestran como texto con búsqueda.
+- Markdown presenta títulos, listas, citas y bloques con jerarquía visual.
 - JSON se presenta como un árbol interactivo con objetos y listas plegables.
-- CSV se muestra como tabla con encabezados, filas alternadas y desplazamiento horizontal.
-- PNG, JPG, JPEG y WebP se muestran dentro de PixelPy.
-- PDF, Excel, ZIP y formatos desconocidos muestran sus datos y ofrecen **OTRA APP**.
+- CSV se muestra como tabla filtrable con encabezados, filas alternadas y desplazamiento horizontal.
+- PNG, JPG, JPEG y WebP permiten zoom táctil dentro de PixelPy.
+- ZIP muestra su contenido sin extraerlo y XLSX ofrece una vista básica de la primera hoja.
+- PDF y formatos desconocidos ofrecen **OTRA APP**.
 - Todos los formatos pueden compartirse desde el visor.
 
 La vista previa textual está limitada a 1 MB para evitar bloqueos. El visor siempre usa la copia publicada en el almacenamiento privado de PixelPy, no el archivo que el script podría estar modificando.
@@ -71,9 +75,11 @@ El APK se genera en `pyeditor/build/outputs/apk/development/debug/`.
 
 ## Versión
 
-La versión publicada actual es `1.2.2`. Añade el visor desde la consola, galería para múltiples resultados, tablas CSV y árboles JSON plegables.
+La próxima versión es `1.3.0`. Añade historial persistente de ejecuciones, visores avanzados, búsqueda en resultados, parámetros de automatización, avisos de finalización y corrige la sincronización de números de línea.
 
 Las ejecuciones programadas son aproximadas: Android puede retrasarlas por batería, Doze o restricciones del sistema.
+
+Los parámetros guardados se exponen durante la ejecución como variables de entorno. Por ejemplo, `CIUDAD=Santiago` se consulta en Python con `os.getenv("CIUDAD")`; PixelPy restaura el entorno al terminar.
 
 ## Privacidad
 

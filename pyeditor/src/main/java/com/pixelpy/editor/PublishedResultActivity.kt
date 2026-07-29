@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,8 +31,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,6 +46,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -50,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import java.io.File
+import java.util.zip.ZipFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -61,8 +67,10 @@ private val ResultYellow = Color(0xFFFFD43B)
 private val ResultBlue = Color(0xFF79D8FF)
 private const val MAX_PREVIEW_BYTES = 1_000_000
 
-internal enum class PublishedPreviewKind { Text, Json, Csv, Image, External }
+internal enum class PublishedPreviewKind { Text, Markdown, Json, Csv, Image, Zip, Excel, External }
 internal const val EXTRA_PROJECT_RESULT_PATH = "com.pixelpy.editor.extra.PROJECT_RESULT_PATH"
+internal const val EXTRA_SESSION_ID = "com.pixelpy.editor.extra.SESSION_ID"
+internal const val EXTRA_SESSION_ARTIFACT_PATH = "com.pixelpy.editor.extra.SESSION_ARTIFACT_PATH"
 
 internal data class CsvPreviewData(val headers: List<String>, val rows: List<List<String>>)
 
@@ -75,10 +83,13 @@ internal sealed interface JsonPreviewNode {
 internal enum class JsonValueType { String, Number, Boolean, Null }
 
 internal fun previewKind(file: File): PublishedPreviewKind = when (file.extension.lowercase()) {
-    "txt", "log", "md", "xml" -> PublishedPreviewKind.Text
+    "txt", "log", "xml" -> PublishedPreviewKind.Text
+    "md", "markdown" -> PublishedPreviewKind.Markdown
     "json" -> PublishedPreviewKind.Json
     "csv" -> PublishedPreviewKind.Csv
     "png", "jpg", "jpeg", "webp" -> PublishedPreviewKind.Image
+    "zip" -> PublishedPreviewKind.Zip
+    "xlsx" -> PublishedPreviewKind.Excel
     else -> PublishedPreviewKind.External
 }
 
@@ -158,6 +169,8 @@ class PublishedResultActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val automationId = intent.getStringExtra(EXTRA_AUTOMATION_ID)
         val projectResultPath = intent.getStringExtra(EXTRA_PROJECT_RESULT_PATH)
+        val sessionId = intent.getStringExtra(EXTRA_SESSION_ID)
+        val sessionArtifactPath = intent.getStringExtra(EXTRA_SESSION_ARTIFACT_PATH)
         val app = application as PixelPyApp
         val automation = automationId?.let(app.automationRepository::get)
         val file = when {
@@ -167,13 +180,17 @@ class PublishedResultActivity : ComponentActivity() {
             projectResultPath != null -> runCatching {
                 AutomationPathValidator.resolveProjectResult(filesDir, projectResultPath)
             }.getOrNull()
+            sessionId != null && sessionArtifactPath != null -> {
+                val store = ExecutionSessionStore(this)
+                store.get(sessionId)?.let { store.artifact(it, sessionArtifactPath) }
+            }
             else -> null
         }?.takeIf(File::isFile)
 
         setContent {
             MaterialTheme(lightColorScheme(primary = ResultInk, background = ResultPaper, surface = ResultPaper)) {
                 PublishedResultScreen(
-                    automationName = automation?.name ?: "Ejecución actual",
+                    automationName = automation?.name ?: if (sessionId != null) "Historial de ejecución" else "Ejecución actual",
                     file = file,
                     mimeType = automation?.publishedMimeType,
                     onBack = ::finish,
@@ -257,6 +274,7 @@ private fun PublishedResultScreen(
         }
 
         val kind = remember(file.path, file.lastModified()) { previewKind(file) }
+        var search by remember(file.path) { mutableStateOf("") }
         Column(
             Modifier.fillMaxSize().padding(14.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -268,7 +286,18 @@ private fun PublishedResultScreen(
                 }
             }
             Surface(Modifier.fillMaxWidth(), color = Color.White, border = BorderStroke(3.dp, ResultInk)) {
-                PublishedPreview(file, kind)
+                Column {
+                    if (kind in listOf(PublishedPreviewKind.Text, PublishedPreviewKind.Markdown, PublishedPreviewKind.Json, PublishedPreviewKind.Csv)) {
+                        OutlinedTextField(
+                            search,
+                            { search = it },
+                            Modifier.fillMaxWidth().padding(10.dp),
+                            label = { Text("Buscar en el resultado") },
+                            singleLine = true,
+                        )
+                    }
+                    PublishedPreview(file, kind, search)
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { onShare(file) }, modifier = Modifier.weight(1f)) {
@@ -283,26 +312,43 @@ private fun PublishedResultScreen(
 }
 
 @Composable
-private fun PublishedPreview(file: File, kind: PublishedPreviewKind) {
+private fun PublishedPreview(file: File, kind: PublishedPreviewKind, search: String) {
     when (kind) {
-        PublishedPreviewKind.Json -> JsonPreview(file)
-        PublishedPreviewKind.Csv -> CsvPreview(file)
+        PublishedPreviewKind.Json -> JsonPreview(file, search)
+        PublishedPreviewKind.Csv -> CsvPreview(file, search)
         PublishedPreviewKind.Image -> {
             val bitmap = remember(file.path, file.lastModified()) {
                 runCatching { BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap() }.getOrNull()
             }
             if (bitmap != null) {
-                Image(
-                    bitmap,
-                    contentDescription = file.name,
-                    modifier = Modifier.fillMaxWidth().height(360.dp).padding(10.dp),
-                    contentScale = ContentScale.Fit,
-                )
+                var scale by remember { mutableStateOf(1f) }
+                var offsetX by remember { mutableStateOf(0f) }
+                var offsetY by remember { mutableStateOf(0f) }
+                Column {
+                    Text("Pellizca para ampliar", Modifier.padding(10.dp), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    Image(
+                        bitmap,
+                        contentDescription = file.name,
+                        modifier = Modifier.fillMaxWidth().height(430.dp).padding(10.dp)
+                            .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offsetX, translationY = offsetY)
+                            .pointerInput(Unit) {
+                                detectTransformGestures { _, pan, zoom, _ ->
+                                    scale = (scale * zoom).coerceIn(1f, 5f)
+                                    offsetX += pan.x
+                                    offsetY += pan.y
+                                }
+                            },
+                        contentScale = ContentScale.Fit,
+                    )
+                    TextButton(onClick = { scale = 1f; offsetX = 0f; offsetY = 0f }) { Text("RESTABLECER") }
+                }
             } else PreviewMessage("No se pudo decodificar la imagen.")
         }
+        PublishedPreviewKind.Zip -> ZipPreview(file)
+        PublishedPreviewKind.Excel -> ExcelPreview(file)
         PublishedPreviewKind.External ->
             PreviewMessage("Este formato necesita una aplicación compatible. Puedes compartirlo o abrirlo externamente.")
-        PublishedPreviewKind.Text -> {
+        PublishedPreviewKind.Text, PublishedPreviewKind.Markdown -> {
             var text by remember(file.path, file.lastModified()) { mutableStateOf("Preparando vista previa…") }
             LaunchedEffect(file.path, file.lastModified()) {
                 text = withContext(Dispatchers.IO) {
@@ -310,18 +356,18 @@ private fun PublishedPreview(file: File, kind: PublishedPreviewKind) {
                         .getOrElse { "No se pudo leer la vista previa: ${it.message}" }
                 }
             }
-            Text(
-                text,
-                Modifier.padding(14.dp).horizontalScroll(rememberScrollState()),
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-            )
+            val visible = if (search.isBlank()) text else text.lineSequence()
+                .filter { it.contains(search, ignoreCase = true) }
+                .joinToString("\n")
+                .ifBlank { "Sin coincidencias para “$search”." }
+            if (kind == PublishedPreviewKind.Markdown) MarkdownPreview(visible)
+            else Text(visible, Modifier.padding(14.dp).horizontalScroll(rememberScrollState()), fontFamily = FontFamily.Monospace, fontSize = 12.sp)
         }
     }
 }
 
 @Composable
-private fun CsvPreview(file: File) {
+private fun CsvPreview(file: File, search: String) {
     var data by remember(file.path, file.lastModified()) { mutableStateOf<CsvPreviewData?>(null) }
     var error by remember(file.path, file.lastModified()) { mutableStateOf<String?>(null) }
     LaunchedEffect(file.path, file.lastModified()) {
@@ -353,7 +399,9 @@ private fun CsvPreview(file: File) {
         )
         Column(Modifier.horizontalScroll(rememberScrollState())) {
             CsvRow(table.headers, header = true)
-            table.rows.forEachIndexed { index, row -> CsvRow(row, shaded = index % 2 == 1) }
+            table.rows
+                .filter { row -> search.isBlank() || row.any { it.contains(search, ignoreCase = true) } }
+                .forEachIndexed { index, row -> CsvRow(row, shaded = index % 2 == 1) }
         }
     }
 }
@@ -375,7 +423,7 @@ private fun CsvRow(values: List<String>, header: Boolean = false, shaded: Boolea
 }
 
 @Composable
-private fun JsonPreview(file: File) {
+private fun JsonPreview(file: File, search: String) {
     var node by remember(file.path, file.lastModified()) { mutableStateOf<JsonPreviewNode?>(null) }
     var error by remember(file.path, file.lastModified()) { mutableStateOf<String?>(null) }
     LaunchedEffect(file.path, file.lastModified()) {
@@ -397,7 +445,11 @@ private fun JsonPreview(file: File) {
     Column(Modifier.fillMaxWidth().padding(10.dp)) {
         Text("Toca {…} o […] para plegar cada sección", fontWeight = FontWeight.Bold, fontSize = 11.sp)
         Spacer(Modifier.height(6.dp))
-        JsonNodeRow(label = null, node = root, depth = 0, path = "root")
+        if (search.isBlank() || jsonNodeContains(root, search)) {
+            JsonNodeRow(label = null, node = root, depth = 0, path = "root", search = search)
+        } else {
+            Text("Sin coincidencias para “$search”.", Modifier.padding(10.dp))
+        }
     }
 }
 
@@ -407,6 +459,7 @@ private fun JsonNodeRow(
     node: JsonPreviewNode,
     depth: Int,
     path: String,
+    search: String = "",
 ) {
     val left = (depth * 14).dp
     when (node) {
@@ -422,7 +475,9 @@ private fun JsonNodeRow(
                 Text(if (expanded) "{ ${node.values.size} }" else "{…}", fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
             }
             if (expanded) node.values.forEach { (key, child) ->
-                JsonNodeRow(key, child, depth + 1, "$path.$key")
+                if (search.isBlank() || key.contains(search, true) || jsonNodeContains(child, search)) {
+                    JsonNodeRow(key, child, depth + 1, "$path.$key", search)
+                }
             }
         }
         is JsonPreviewNode.ArrayNode -> {
@@ -437,7 +492,9 @@ private fun JsonNodeRow(
                 Text(if (expanded) "[ ${node.values.size} ]" else "[…]", fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
             }
             if (expanded) node.values.forEachIndexed { index, child ->
-                JsonNodeRow("[$index]", child, depth + 1, "$path[$index]")
+                if (search.isBlank() || jsonNodeContains(child, search)) {
+                    JsonNodeRow("[$index]", child, depth + 1, "$path[$index]", search)
+                }
             }
         }
         is JsonPreviewNode.ValueNode -> {
@@ -455,6 +512,109 @@ private fun JsonNodeRow(
                     fontFamily = FontFamily.Monospace,
                 )
             }
+        }
+    }
+}
+
+private fun jsonNodeContains(node: JsonPreviewNode, query: String): Boolean = when (node) {
+    is JsonPreviewNode.ObjectNode -> node.values.any { (key, value) ->
+        key.contains(query, true) || jsonNodeContains(value, query)
+    }
+    is JsonPreviewNode.ArrayNode -> node.values.any { jsonNodeContains(it, query) }
+    is JsonPreviewNode.ValueNode -> node.value.contains(query, true)
+}
+
+@Composable
+private fun MarkdownPreview(source: String) {
+    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        source.lines().forEach { raw ->
+            val line = raw.trimEnd()
+            when {
+                line.startsWith("### ") -> Text(line.removePrefix("### "), fontSize = 17.sp, fontWeight = FontWeight.Black)
+                line.startsWith("## ") -> Text(line.removePrefix("## "), fontSize = 20.sp, fontWeight = FontWeight.Black)
+                line.startsWith("# ") -> Text(line.removePrefix("# "), fontSize = 24.sp, fontWeight = FontWeight.Black)
+                line.startsWith("- ") || line.startsWith("* ") -> Text("• ${line.drop(2)}", fontSize = 13.sp)
+                line.startsWith("> ") -> Surface(color = ResultBlue, border = BorderStroke(2.dp, ResultInk)) {
+                    Text(line.drop(2), Modifier.fillMaxWidth().padding(9.dp), fontWeight = FontWeight.Bold)
+                }
+                line.startsWith("```") -> Text(line, fontFamily = FontFamily.Monospace, color = Color(0xFF77716A))
+                else -> Text(line.ifBlank { " " }, fontFamily = if (line.startsWith("    ")) FontFamily.Monospace else FontFamily.Default, fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ZipPreview(file: File) {
+    var entries by remember(file.path, file.lastModified()) { mutableStateOf<List<Pair<String, Long>>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(file.path, file.lastModified()) {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                ZipFile(file).use { zip ->
+                    zip.entries().asSequence().filterNot { it.isDirectory }.take(500)
+                        .map { it.name to it.size.coerceAtLeast(0) }.toList()
+                }
+            }.onSuccess { entries = it }.onFailure { error = it.message }
+        }
+    }
+    val files = entries
+    if (files == null) return PreviewMessage(error ?: "Leyendo contenido del ZIP…")
+    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("${files.size} archivos", fontWeight = FontWeight.Black)
+        files.forEach { (name, size) ->
+            Row(Modifier.fillMaxWidth().border(1.dp, ResultInk).padding(8.dp)) {
+                Text(name, Modifier.weight(1f), fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                Text(humanFileSize(size), fontSize = 10.sp)
+            }
+        }
+    }
+}
+
+internal data class ExcelPreviewData(val rows: List<List<String>>)
+
+internal fun parseBasicXlsx(file: File): ExcelPreviewData = ZipFile(file).use { zip ->
+    val shared = zip.getEntry("xl/sharedStrings.xml")?.let { entry ->
+        val xml = zip.getInputStream(entry).bufferedReader().readText()
+        Regex("<t(?:\\s[^>]*)?>(.*?)</t>", setOf(RegexOption.DOT_MATCHES_ALL))
+            .findAll(xml).map { decodeXml(it.groupValues[1]) }.toList()
+    }.orEmpty()
+    val sheet = zip.getEntry("xl/worksheets/sheet1.xml") ?: error("El libro no contiene una primera hoja")
+    val xml = zip.getInputStream(sheet).bufferedReader().readText()
+    val rows = Regex("<row(?:\\s[^>]*)?>(.*?)</row>", setOf(RegexOption.DOT_MATCHES_ALL))
+        .findAll(xml).take(200).map { row ->
+            Regex("<c([^>]*)>(.*?)</c>", setOf(RegexOption.DOT_MATCHES_ALL)).findAll(row.groupValues[1]).map { cell ->
+                val attributes = cell.groupValues[1]
+                val body = cell.groupValues[2]
+                val raw = Regex("<v>(.*?)</v>", RegexOption.DOT_MATCHES_ALL).find(body)?.groupValues?.get(1)
+                    ?: Regex("<t(?:\\s[^>]*)?>(.*?)</t>", RegexOption.DOT_MATCHES_ALL).find(body)?.groupValues?.get(1)
+                    ?: ""
+                if (Regex("""t=["']s["']""").containsMatchIn(attributes)) shared.getOrNull(raw.toIntOrNull() ?: -1).orEmpty()
+                else decodeXml(raw)
+            }.toList()
+        }.toList()
+    ExcelPreviewData(rows)
+}
+
+private fun decodeXml(value: String): String = value
+    .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
+    .replace("&apos;", "'").replace("&amp;", "&")
+
+@Composable
+private fun ExcelPreview(file: File) {
+    var data by remember(file.path, file.lastModified()) { mutableStateOf<ExcelPreviewData?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(file.path, file.lastModified()) {
+        withContext(Dispatchers.IO) {
+            runCatching { parseBasicXlsx(file) }.onSuccess { data = it }.onFailure { error = it.message }
+        }
+    }
+    val sheet = data
+    if (sheet == null) return PreviewMessage(error ?: "Leyendo primera hoja de Excel…")
+    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+        Text("Primera hoja · ${sheet.rows.size} filas", Modifier.padding(10.dp), fontWeight = FontWeight.Black)
+        Column(Modifier.horizontalScroll(rememberScrollState())) {
+            sheet.rows.forEachIndexed { index, row -> CsvRow(row, header = index == 0, shaded = index % 2 == 0) }
         }
     }
 }

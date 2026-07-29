@@ -107,7 +107,9 @@ class AutomationBridgeAndWidgetTest {
         assertEquals(PublishedPreviewKind.Json, previewKind(File("report.json")))
         assertEquals(PublishedPreviewKind.Csv, previewKind(File("report.csv")))
         assertEquals(PublishedPreviewKind.Image, previewKind(File("chart.png")))
-        assertEquals(PublishedPreviewKind.External, previewKind(File("report.xlsx")))
+        assertEquals(PublishedPreviewKind.Markdown, previewKind(File("readme.md")))
+        assertEquals(PublishedPreviewKind.Zip, previewKind(File("results.zip")))
+        assertEquals(PublishedPreviewKind.Excel, previewKind(File("report.xlsx")))
         assertEquals("1.5 MB", humanFileSize(1_572_864))
     }
 

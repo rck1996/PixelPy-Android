@@ -1,12 +1,16 @@
 package com.pixelpy.editor
 
 import android.os.Bundle
+import android.os.Build
+import android.Manifest
+import android.content.pm.PackageManager
 import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
+import androidx.core.app.ActivityCompat
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -47,8 +51,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.atomic.AtomicReference
-import org.json.JSONArray
-import org.json.JSONObject
 import android.provider.OpenableColumns
 import java.util.zip.ZipInputStream
 
@@ -59,7 +61,6 @@ private val Pink = Color(0xFFFF5DA2)
 private val Blue = Color(0xFF79D8FF)
 private val Green = Color(0xFF7EE787)
 internal enum class Tab { Projects, Editor, Repl, Console }
-private data class RunRecord(val file: String, val ok: Boolean, val preview: String, val time: Long)
 private data class CodeSymbol(val kind: String, val name: String, val line: Int)
 private data class ReplEntry(val command: String, val output: String, val ok: Boolean)
 private data class RuntimeResult(val ok: Boolean, val output: String, val files: List<File>, val errorLine: Int?)
@@ -99,6 +100,7 @@ class MainActivity : ComponentActivity() {
     val transitions = remember { EditorTransitionCoordinator() }
     val projectsRoot = remember { File(context.filesDir, "projects").apply { mkdirs() } }
     val sessionStore = remember { EditorSessionStore(context.applicationContext) }
+    val executionSessionStore = remember { ExecutionSessionStore(context.applicationContext) }
     val autosave = remember {
         (context.applicationContext as PixelPyApp).autosaveCoordinator
     }
@@ -155,7 +157,7 @@ class MainActivity : ComponentActivity() {
     var replEntries by remember { mutableStateOf<List<ReplEntry>>(emptyList()) }
     var inputBridge by remember { mutableStateOf<InputBridge?>(null) }
     var pendingPrompt by remember { mutableStateOf<String?>(null) }
-    var history by remember { mutableStateOf(loadHistory(context)) }
+    var executionSessions by remember { mutableStateOf(executionSessionStore.list()) }
     val saveStates by autosave.states.collectAsState()
     val saveStatus = saveStates[runCatching { current.canonicalPath }.getOrDefault(current.path)]
         ?: SaveStatus.Saved
@@ -397,6 +399,7 @@ class MainActivity : ComponentActivity() {
         executedProject: String,
         debug: Boolean,
         bridge: InputBridge,
+        startedAtMillis: Long,
     ) {
         scope.launch {
             try {
@@ -417,10 +420,36 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 success = result.ok; output = result.output.ifBlank { "✓ Programa terminado sin salida." }; generated = result.files; lastErrorLine = result.errorLine; if (result.files.isNotEmpty()) resourceVersion++
-                history = (listOf(RunRecord(executedFile, result.ok, output.take(700), System.currentTimeMillis())) + history).take(20)
-                saveHistory(context, history)
+                executionSessions = withContext(Dispatchers.IO) {
+                    executionSessionStore.record(
+                        projectPath = runCatching {
+                            File(executedProject).canonicalFile.relativeTo(projectsRoot.canonicalFile).invariantSeparatorsPath
+                        }.getOrDefault(File(executedProject).name),
+                        scriptName = executedFile,
+                        source = executedSource,
+                        output = output,
+                        success = result.ok,
+                        startedAtMillis = startedAtMillis,
+                        finishedAtMillis = System.currentTimeMillis(),
+                        generatedFiles = result.files,
+                    )
+                    executionSessionStore.list()
+                }
             } catch (error: Exception) {
                 success = false; lastErrorLine = null; output = "ERROR DEL RUNTIME\n${error::class.simpleName}: ${error.message}"
+                executionSessions = withContext(Dispatchers.IO) {
+                    executionSessionStore.record(
+                        projectPath = File(executedProject).name,
+                        scriptName = executedFile,
+                        source = executedSource,
+                        output = output,
+                        success = false,
+                        startedAtMillis = startedAtMillis,
+                        finishedAtMillis = System.currentTimeMillis(),
+                        generatedFiles = emptyList(),
+                    )
+                    executionSessionStore.list()
+                }
             } finally {
                 running = false
                 inputBridge = null
@@ -445,11 +474,12 @@ class MainActivity : ComponentActivity() {
             val executedFile = executionFile.name
             val executedProject = requireNotNull(executionFile.parentFile).absolutePath
             running = true
+            generated = emptyList()
             tab = Tab.Console
             lastRunFile = executedFile; lastRunProject = executedProject; lastRunSource = executedSource
             val bridge = InputBridge { question -> scope.launch(Dispatchers.Main) { pendingPrompt = question.ifBlank { "Python solicita un valor" } } }
             inputBridge = bridge
-            executeSnapshot(executedFile, executedSource, executedProject, debug, bridge)
+            executeSnapshot(executedFile, executedSource, executedProject, debug, bridge, System.currentTimeMillis())
         }
     }
     fun stopCode() { inputBridge?.cancel(); pendingPrompt = null; output = "Deteniendo ejecución…" }
@@ -479,6 +509,23 @@ class MainActivity : ComponentActivity() {
         }
         context.startActivity(Intent(context, PublishedResultActivity::class.java).apply {
             putExtra(EXTRA_PROJECT_RESULT_PATH, "projects/$relative")
+        })
+    }
+
+    LaunchedEffect(showAutomations) {
+        if (showAutomations && Build.VERSION.SDK_INT >= 33 &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            (context as? android.app.Activity)?.let {
+                ActivityCompat.requestPermissions(it, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7301)
+            }
+        }
+    }
+
+    fun viewSessionArtifact(session: ExecutionSession, relativePath: String) {
+        context.startActivity(Intent(context, PublishedResultActivity::class.java).apply {
+            putExtra(EXTRA_SESSION_ID, session.id)
+            putExtra(EXTRA_SESSION_ARTIFACT_PATH, relativePath)
         })
     }
 
@@ -607,7 +654,7 @@ class MainActivity : ComponentActivity() {
                         if (textChanged) autosave.onEdit(current, next.text)
                     })
                     Tab.Repl -> ReplScreen(dir, replEntries, runtimeBusy) { replEntries = it }
-                    Tab.Console -> Console(lastRunFile, lastRunSource, output, generated, history, success, running, lastErrorLine, onBack = { tab = Tab.Editor }, onGoToLine = { line ->
+                    Tab.Console -> Console(lastRunFile, lastRunSource, output, generated, executionSessions, success, running, lastErrorLine, onBack = { tab = Tab.Editor }, onGoToLine = { line ->
                         transition {
                             if (!flushPendingSave(current)) return@transition
                             val target = File(lastRunProject, lastRunFile).canonicalFile
@@ -637,7 +684,29 @@ class MainActivity : ComponentActivity() {
                                 android.widget.Toast.makeText(context, "El archivo ejecutado ya no existe", android.widget.Toast.LENGTH_SHORT).show()
                             }
                         }
-                    }, onRun = ::runCode, onView = ::viewGeneratedFile, onSave = { exportFile = it; saveLauncher.launch(it.name) }, onShare = ::shareFile)
+                    }, onRun = ::runCode, onView = ::viewGeneratedFile, onSave = { exportFile = it; saveLauncher.launch(it.name) }, onShare = ::shareFile,
+                        onOpenSessionArtifact = ::viewSessionArtifact,
+                        onPinSession = { session ->
+                            executionSessionStore.setPinned(session.id, !session.pinned)
+                            executionSessions = executionSessionStore.list()
+                        },
+                        onDeleteSession = { session ->
+                            executionSessionStore.delete(session.id)
+                            executionSessions = executionSessionStore.list()
+                        },
+                        onExportSession = { session ->
+                            scope.launch {
+                                val zip = withContext(Dispatchers.IO) {
+                                    executionSessionStore.export(
+                                        session,
+                                        File(context.cacheDir, "PixelPy-${session.scriptName.removeSuffix(".py")}-${session.id.take(8)}.zip"),
+                                    )
+                                }
+                                exportFile = zip
+                                saveLauncher.launch(zip.name)
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -740,6 +809,8 @@ class MainActivity : ComponentActivity() {
     var showOutline by remember { mutableStateOf(false) }
     var showVersions by remember { mutableStateOf(false) }
     var moreTools by remember { mutableStateOf(false) }
+    val editorVerticalScroll = rememberScrollState()
+    val editorHorizontalScroll = rememberScrollState()
     LaunchedEffect(fontSize) { context.getSharedPreferences("pixelpy", 0).edit().putFloat("font_size", fontSize).apply() }
     val completionPrefix = code.text.substring(0, code.selection.min).takeLastWhile { it.isLetterOrDigit() || it == '_' }
     val completions = if (completionPrefix.length >= 2) completionItems(code.text).filter { it.startsWith(completionPrefix, ignoreCase = true) && !it.equals(completionPrefix, true) }.take(5) else emptyList()
@@ -794,11 +865,10 @@ class MainActivity : ComponentActivity() {
         Spacer(Modifier.height(8.dp))
         Box(Modifier.weight(1f).fillMaxWidth().padding(end = 5.dp, bottom = 5.dp)) {
             Box(Modifier.matchParentSize().offset(5.dp, 5.dp).background(Ink))
-            Row(Modifier.fillMaxSize().background(Color(0xFF20232A)).border(3.dp, Ink).padding(10.dp)) {
-                val lines = code.text.count { it == '\n' } + 1
-                Text((1..lines).joinToString("\n"), color = Color(0xFF7D8590), fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, lineHeight = (fontSize + 7).sp, textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            Row(Modifier.fillMaxSize().background(Color(0xFF20232A)).border(3.dp, Ink).verticalScroll(editorVerticalScroll).padding(10.dp)) {
+                Text(lineNumberText(code.text), Modifier.width(46.dp), color = Color(0xFF7D8590), fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, lineHeight = (fontSize + 7).sp, textAlign = androidx.compose.ui.text.style.TextAlign.End)
                 Spacer(Modifier.width(10.dp)); Box(Modifier.width(2.dp).fillMaxHeight().background(Color(0xFF444C56))); Spacer(Modifier.width(10.dp))
-                BasicTextField(value = code, onValueChange = { raw -> change(autoIndent(code, raw)) }, modifier = Modifier.testTag("editor-input").fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()), textStyle = TextStyle(color = Color.White, fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, lineHeight = (fontSize + 7).sp), cursorBrush = SolidColor(Yellow), visualTransformation = PythonHighlight)
+                BasicTextField(value = code, onValueChange = { raw -> change(autoIndent(code, raw)) }, modifier = Modifier.testTag("editor-input").fillMaxSize().horizontalScroll(editorHorizontalScroll), textStyle = TextStyle(color = Color.White, fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, lineHeight = (fontSize + 7).sp), cursorBrush = SolidColor(Yellow), visualTransformation = PythonHighlight)
             }
         }
         if (completions.isNotEmpty()) {
@@ -855,7 +925,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun Console(fileName: String, code: String, output: String, generated: List<File>, history: List<RunRecord>, success: Boolean?, running: Boolean, errorLine: Int?, onBack: () -> Unit, onGoToLine: (Int) -> Unit, onRun: () -> Unit, onView: (File) -> Unit, onSave: (File) -> Unit, onShare: (File) -> Unit) {
+@Composable private fun Console(fileName: String, code: String, output: String, generated: List<File>, sessions: List<ExecutionSession>, success: Boolean?, running: Boolean, errorLine: Int?, onBack: () -> Unit, onGoToLine: (Int) -> Unit, onRun: () -> Unit, onView: (File) -> Unit, onSave: (File) -> Unit, onShare: (File) -> Unit, onOpenSessionArtifact: (ExecutionSession, String) -> Unit, onPinSession: (ExecutionSession) -> Unit, onDeleteSession: (ExecutionSession) -> Unit, onExportSession: (ExecutionSession) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val report = "PIXELPY LOG\n\nCÓDIGO:\n$code\n\nSALIDA:\n$output"
@@ -898,7 +968,14 @@ class MainActivity : ComponentActivity() {
         }
         Spacer(Modifier.height(10.dp)); Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { BrutalButton("← EDITAR", Blue, Modifier.weight(1f), onClick = onBack); BrutalButton("↻ REPETIR", Yellow, Modifier.weight(1f), enabled = !running, onClick = onRun) }
     }
-    if (showHistory) HistoryDialog(history) { showHistory = false }
+    if (showHistory) HistoryDialog(
+        sessions = sessions,
+        onOpenArtifact = onOpenSessionArtifact,
+        onPin = onPinSession,
+        onDelete = onDeleteSession,
+        onExport = onExportSession,
+        onDismiss = { showHistory = false },
+    )
 }
 
 @Composable private fun BrutalCard(color: Color, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
@@ -938,14 +1015,56 @@ class MainActivity : ComponentActivity() {
     Row(Modifier.fillMaxWidth().background(Color.White).border(2.dp, Ink).padding(10.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(38.dp).background(Blue).border(2.dp, Ink), contentAlignment = Alignment.Center) { Text("PY", fontWeight = FontWeight.Black) }; Spacer(Modifier.width(10.dp)); Column { Text("$name  $version", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold); Text(description, fontSize = 12.sp) } }
 }
 
-@Composable private fun HistoryDialog(history: List<RunRecord>, onDismiss: () -> Unit) {
+@Composable private fun HistoryDialog(
+    sessions: List<ExecutionSession>,
+    onOpenArtifact: (ExecutionSession, String) -> Unit,
+    onPin: (ExecutionSession) -> Unit,
+    onDelete: (ExecutionSession) -> Unit,
+    onExport: (ExecutionSession) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var comparison by remember { mutableStateOf<String?>(null) }
     AlertDialog(onDismissRequest = onDismiss, containerColor = Paper, shape = RoundedCornerShape(0.dp), title = { Text("HISTORIAL", fontWeight = FontWeight.Black) }, text = {
         LazyColumn(Modifier.heightIn(max = 460.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (history.isEmpty()) item { Text("Todavía no hay ejecuciones guardadas.") }
-            items(history) { run ->
-                Column(Modifier.fillMaxWidth().background(if (run.ok) Green else Pink).border(2.dp, Ink).padding(10.dp)) {
-                    Row { Text(if (run.ok) "✓ " else "✕ ", fontWeight = FontWeight.Black); Text(run.file, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold); Spacer(Modifier.weight(1f)); Text(java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(run.time)), fontSize = 11.sp) }
-                    Text(run.preview.lineSequence().firstOrNull().orEmpty().ifBlank { "Sin salida" }, maxLines = 2, fontSize = 12.sp)
+            if (sessions.isEmpty()) item { Text("Todavía no hay ejecuciones guardadas.") }
+            comparison?.let { message ->
+                item {
+                    Surface(color = Blue, border = BorderStroke(2.dp, Ink)) {
+                        Text(message, Modifier.padding(10.dp), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+            items(sessions, key = { it.id }) { session ->
+                Column(Modifier.fillMaxWidth().background(if (session.success) Green else Pink).border(2.dp, Ink).padding(10.dp)) {
+                    Row {
+                        Text(if (session.success) "✓ " else "✕ ", fontWeight = FontWeight.Black)
+                        Text(session.scriptName, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.weight(1f))
+                        if (session.pinned) Text("★ ", fontWeight = FontWeight.Black)
+                        Text(java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(session.startedAtMillis)), fontSize = 10.sp)
+                    }
+                    Text(session.output.lineSequence().firstOrNull().orEmpty().ifBlank { "Sin salida" }, maxLines = 2, fontSize = 12.sp)
+                    Text("${session.durationMillis} ms · ${session.artifacts.size} resultado(s)", fontSize = 10.sp)
+                    session.artifacts.forEach { artifact ->
+                        TextButton(onClick = { onOpenArtifact(session, artifact) }) {
+                            Text("VER ${File(artifact).name}", fontWeight = FontWeight.Black)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { onPin(session) }) { Text(if (session.pinned) "SOLTAR" else "FIJAR") }
+                        TextButton(onClick = { onExport(session) }) { Text("ZIP") }
+                        TextButton(onClick = {
+                            val previous = sessions.dropWhile { it.id != session.id }.drop(1)
+                                .firstOrNull { it.projectPath == session.projectPath && it.scriptName == session.scriptName }
+                            comparison = if (previous == null) {
+                                "No existe una ejecución anterior comparable."
+                            } else {
+                                val diff = compareTextLines(previous.output, session.output)
+                                "Comparación de salida: +${diff.added} · −${diff.removed} · ${diff.unchanged} iguales"
+                            }
+                        }) { Text("COMPARAR") }
+                        TextButton(onClick = { onDelete(session) }) { Text("BORRAR", color = Color(0xFF9A001F)) }
+                    }
                 }
             }
         }
@@ -1003,6 +1122,9 @@ private fun autoIndent(old: TextFieldValue, next: TextFieldValue): TextFieldValu
     val cursor = next.selection.start
     return TextFieldValue(next.text.substring(0, cursor) + indent + next.text.substring(cursor), TextRange(cursor + indent.length))
 }
+
+internal fun lineNumberText(source: String): String =
+    (1..(source.count { it == '\n' } + 1)).joinToString("\n")
 
 private fun insertPair(current: TextFieldValue, value: String, onChange: (TextFieldValue) -> Unit) {
     val start = current.selection.min; val end = current.selection.max
@@ -1109,15 +1231,4 @@ private fun explainError(output: String): String? = when {
     "URLError" in output || "No address associated with hostname" in output -> "No se pudo alcanzar el servidor. Comprueba Internet, la dirección y que el servicio esté disponible."
     "Traceback" in output -> "Python detuvo la ejecución por un error. La última línea indica el tipo y el mensaje; usa IR A LÍNEA para corregirlo."
     else -> null
-}
-
-private fun loadHistory(context: android.content.Context): List<RunRecord> = runCatching {
-    val raw = context.getSharedPreferences("pixelpy", 0).getString("run_history", "[]") ?: "[]"
-    val array = JSONArray(raw)
-    (0 until array.length()).map { index -> val item = array.getJSONObject(index); RunRecord(item.getString("file"), item.getBoolean("ok"), item.getString("preview"), item.getLong("time")) }
-}.getOrDefault(emptyList())
-
-private fun saveHistory(context: android.content.Context, history: List<RunRecord>) {
-    val array = JSONArray(); history.forEach { run -> array.put(JSONObject().put("file", run.file).put("ok", run.ok).put("preview", run.preview).put("time", run.time)) }
-    context.getSharedPreferences("pixelpy", 0).edit().putString("run_history", array.toString()).apply()
 }

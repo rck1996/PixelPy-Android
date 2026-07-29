@@ -7,7 +7,7 @@ import java.time.ZonedDateTime
 import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 
-internal const val AUTOMATION_STORE_VERSION = 2
+internal const val AUTOMATION_STORE_VERSION = 3
 internal const val MAX_AUTOMATION_TIMEOUT_SECONDS = 120
 internal const val MAX_AUTOMATION_SUMMARY_LENGTH = 4_000
 internal const val MAX_AUTOMATION_HISTORY = 10
@@ -44,6 +44,7 @@ internal data class ScriptAutomation(
     val timeoutSeconds: Int = MAX_AUTOMATION_TIMEOUT_SECONDS,
     val enabled: Boolean = true,
     val highlightedResultPath: String? = null,
+    val parameters: Map<String, String> = emptyMap(),
     val lastStatus: AutomationRunStatus = AutomationRunStatus.Pending,
     val lastRunAtMillis: Long? = null,
     val nextRunAtMillis: Long? = null,

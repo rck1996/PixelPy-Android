@@ -22,6 +22,27 @@ La consola reúne los archivos creados o actualizados en una galería horizontal
 
 En este caso PixelPy abre el archivo actual del proyecto. La copia estable en `published/` se reserva para automatizaciones y widgets.
 
+Cada ejecución manual también crea una sesión local independiente. El historial conserva el código ejecutado, la salida y una copia de sus archivos generados. Las sesiones fijadas no se eliminan durante la limpieza automática; las demás conservan las 20 más recientes. Desde **HISTORIAL** se puede:
+
+- abrir un resultado histórico aunque el archivo de trabajo haya cambiado;
+- fijar o borrar una sesión;
+- comparar el resumen de salida con la ejecución anterior del mismo script;
+- exportar código, salida y resultados en un ZIP.
+
+## Vistas integradas
+
+- Texto, CSV y JSON incluyen búsqueda.
+- Markdown se renderiza con títulos, listas y citas.
+- Las imágenes permiten zoom táctil.
+- ZIP muestra hasta 500 entradas sin extraer contenido.
+- Excel muestra una vista básica de las primeras 200 filas de la primera hoja.
+
+Los libros complejos, fórmulas, estilos avanzados y formatos no compatibles pueden abrirse con **OTRA APP**.
+
+## Parámetros y avisos
+
+Una automatización puede guardar hasta 20 parámetros `CLAVE=valor`. Durante su ejecución están disponibles mediante `os.getenv("CLAVE")` y se eliminan o restauran al terminar. Android solicita permiso para notificaciones al entrar por primera vez a Automatizaciones; al finalizar, el aviso ofrece **VER RESULTADO** cuando existe un archivo publicado.
+
 ## Vista previa
 
 | Formato | Comportamiento |
