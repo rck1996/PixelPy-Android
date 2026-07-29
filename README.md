@@ -18,6 +18,12 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 - Los archivos generados por una ejecución normal aparecen en una galería horizontal y pueden abrirse en el mismo visor directamente desde la consola.
 - Historial persistente de ejecuciones con código, salida y copias de resultados; permite fijar, comparar, borrar y exportar una sesión completa como ZIP.
 - Parámetros guardados por automatización (`CLAVE=valor`) y notificaciones de finalización con acceso directo al resultado.
+- Parámetros visuales tipados (texto, número, sí/no y secreto), además de repetición manual con valores temporales.
+- Historial detallado con código, salida, duración, archivos y diferencias reales línea por línea.
+- Plantillas favoritas para APIs, CSV, Excel, gráficos, scraping y automatizaciones.
+- Gestor de recursos con carpetas visibles aunque estén vacías, importación al destino elegido, selección múltiple, movimiento y renombrado seguros, rutas relativas copiables, papelera y vista previa.
+- Al mover o renombrar un resultado destacado, PixelPy actualiza automáticamente la automatización que lo utiliza.
+- Tema oscuro, contraste alto y tres densidades de interfaz.
 - Diagnóstico de automatizaciones con historial local, causa visible en el widget, reintento y copia del reporte.
 - Interfaz neobrutalista optimizada para teclado móvil.
 
@@ -37,6 +43,10 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 <p align="center">
   <img src="docs/screenshots/result-csv-table.png" alt="Tabla CSV interactiva de PixelPy" width="46%" />
   <img src="docs/screenshots/result-json-tree.png" alt="Árbol JSON plegable de PixelPy" width="46%" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/premium-tools.png" alt="Plantillas, accesibilidad y herramientas premium de PixelPy" width="46%" />
 </p>
 
 ## Resultados publicados
@@ -75,7 +85,7 @@ El APK se genera en `pyeditor/build/outputs/apk/development/debug/`.
 
 ## Versión
 
-La próxima versión es `1.3.0`. Añade historial persistente de ejecuciones, visores avanzados, búsqueda en resultados, parámetros de automatización, avisos de finalización y corrige la sincronización de números de línea.
+La próxima versión es `1.4.0`. Completa la fase premium previa al modo Notebook con parámetros visuales, historial detallado, Excel con varias hojas, Plotly, plantillas, consola filtrable, gestión de recursos y accesibilidad.
 
 Las ejecuciones programadas son aproximadas: Android puede retrasarlas por batería, Doze o restricciones del sistema.
 

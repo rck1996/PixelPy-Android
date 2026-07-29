@@ -53,6 +53,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import android.webkit.WebView
 import androidx.core.content.FileProvider
 import java.io.File
 import java.util.zip.ZipFile
@@ -67,7 +69,7 @@ private val ResultYellow = Color(0xFFFFD43B)
 private val ResultBlue = Color(0xFF79D8FF)
 private const val MAX_PREVIEW_BYTES = 1_000_000
 
-internal enum class PublishedPreviewKind { Text, Markdown, Json, Csv, Image, Zip, Excel, External }
+internal enum class PublishedPreviewKind { Text, Markdown, Json, Csv, Image, Zip, Excel, Html, External }
 internal const val EXTRA_PROJECT_RESULT_PATH = "com.pixelpy.editor.extra.PROJECT_RESULT_PATH"
 internal const val EXTRA_SESSION_ID = "com.pixelpy.editor.extra.SESSION_ID"
 internal const val EXTRA_SESSION_ARTIFACT_PATH = "com.pixelpy.editor.extra.SESSION_ARTIFACT_PATH"
@@ -90,6 +92,7 @@ internal fun previewKind(file: File): PublishedPreviewKind = when (file.extensio
     "png", "jpg", "jpeg", "webp" -> PublishedPreviewKind.Image
     "zip" -> PublishedPreviewKind.Zip
     "xlsx" -> PublishedPreviewKind.Excel
+    "html", "htm" -> PublishedPreviewKind.Html
     else -> PublishedPreviewKind.External
 }
 
@@ -287,7 +290,7 @@ private fun PublishedResultScreen(
             }
             Surface(Modifier.fillMaxWidth(), color = Color.White, border = BorderStroke(3.dp, ResultInk)) {
                 Column {
-                    if (kind in listOf(PublishedPreviewKind.Text, PublishedPreviewKind.Markdown, PublishedPreviewKind.Json, PublishedPreviewKind.Csv)) {
+                    if (kind in listOf(PublishedPreviewKind.Text, PublishedPreviewKind.Markdown, PublishedPreviewKind.Json, PublishedPreviewKind.Csv, PublishedPreviewKind.Excel)) {
                         OutlinedTextField(
                             search,
                             { search = it },
@@ -345,7 +348,8 @@ private fun PublishedPreview(file: File, kind: PublishedPreviewKind, search: Str
             } else PreviewMessage("No se pudo decodificar la imagen.")
         }
         PublishedPreviewKind.Zip -> ZipPreview(file)
-        PublishedPreviewKind.Excel -> ExcelPreview(file)
+        PublishedPreviewKind.Excel -> ExcelPreview(file, search)
+        PublishedPreviewKind.Html -> HtmlChartPreview(file)
         PublishedPreviewKind.External ->
             PreviewMessage("Este formato necesita una aplicación compatible. Puedes compartirlo o abrirlo externamente.")
         PublishedPreviewKind.Text, PublishedPreviewKind.Markdown -> {
@@ -571,7 +575,37 @@ private fun ZipPreview(file: File) {
     }
 }
 
-internal data class ExcelPreviewData(val rows: List<List<String>>)
+internal data class ExcelSheetPreview(val name: String, val rows: List<List<String>>, val frozen: String?)
+internal data class ExcelPreviewData(val sheets: List<ExcelSheetPreview>) {
+    val rows: List<List<String>> get() = sheets.firstOrNull()?.rows.orEmpty()
+}
+
+@Composable
+private fun HtmlChartPreview(file: File) {
+    var html by remember(file.path, file.lastModified()) { mutableStateOf<String?>(null) }
+    LaunchedEffect(file.path, file.lastModified()) {
+        html = withContext(Dispatchers.IO) {
+            if (file.length() > 5_000_000) null else runCatching { file.readText(Charsets.UTF_8) }.getOrNull()
+        }
+    }
+    val source = html ?: return PreviewMessage("El HTML supera 5 MB o no se pudo leer.")
+    val plotly = remember(source) { "plotly" in source.lowercase() }
+    Column {
+        Text(if (plotly) "GRÁFICO INTERACTIVO PLOTLY" else "VISTA HTML LOCAL", Modifier.padding(10.dp), fontWeight = FontWeight.Black)
+        AndroidView(
+            factory = { context ->
+                WebView(context).apply {
+                    settings.javaScriptEnabled = plotly
+                    settings.allowFileAccess = false
+                    settings.allowContentAccess = false
+                    settings.domStorageEnabled = false
+                }
+            },
+            update = { webView -> webView.loadDataWithBaseURL(null, source, "text/html", "UTF-8", null) },
+            modifier = Modifier.fillMaxWidth().height(520.dp),
+        )
+    }
+}
 
 internal fun parseBasicXlsx(file: File): ExcelPreviewData = ZipFile(file).use { zip ->
     val shared = zip.getEntry("xl/sharedStrings.xml")?.let { entry ->
@@ -579,21 +613,28 @@ internal fun parseBasicXlsx(file: File): ExcelPreviewData = ZipFile(file).use { 
         Regex("<t(?:\\s[^>]*)?>(.*?)</t>", setOf(RegexOption.DOT_MATCHES_ALL))
             .findAll(xml).map { decodeXml(it.groupValues[1]) }.toList()
     }.orEmpty()
-    val sheet = zip.getEntry("xl/worksheets/sheet1.xml") ?: error("El libro no contiene una primera hoja")
-    val xml = zip.getInputStream(sheet).bufferedReader().readText()
-    val rows = Regex("<row(?:\\s[^>]*)?>(.*?)</row>", setOf(RegexOption.DOT_MATCHES_ALL))
-        .findAll(xml).take(200).map { row ->
+    val workbookNames = zip.getEntry("xl/workbook.xml")?.let { entry ->
+        Regex("""<sheet[^>]*name=["']([^"']+)["']""").findAll(zip.getInputStream(entry).bufferedReader().readText()).map { decodeXml(it.groupValues[1]) }.toList()
+    }.orEmpty()
+    val sheetEntries = zip.entries().asSequence().filter { it.name.matches(Regex("xl/worksheets/sheet\\d+\\.xml")) }.sortedBy { it.name }.toList()
+    ExcelPreviewData(sheetEntries.mapIndexed { sheetIndex, sheet ->
+        val xml = zip.getInputStream(sheet).bufferedReader().readText()
+        val frozen = Regex("""<pane[^>]*(?:xSplit=["']([^"']*)["'])?[^>]*(?:ySplit=["']([^"']*)["'])?[^>]*/>""").find(xml)?.let { match ->
+            "Columnas ${match.groupValues.getOrNull(1).orEmpty().ifBlank { "0" }} · filas ${match.groupValues.getOrNull(2).orEmpty().ifBlank { "0" }}"
+        }
+        val rows = Regex("<row(?:\\s[^>]*)?>(.*?)</row>", setOf(RegexOption.DOT_MATCHES_ALL)).findAll(xml).take(200).map { row ->
             Regex("<c([^>]*)>(.*?)</c>", setOf(RegexOption.DOT_MATCHES_ALL)).findAll(row.groupValues[1]).map { cell ->
                 val attributes = cell.groupValues[1]
                 val body = cell.groupValues[2]
                 val raw = Regex("<v>(.*?)</v>", RegexOption.DOT_MATCHES_ALL).find(body)?.groupValues?.get(1)
                     ?: Regex("<t(?:\\s[^>]*)?>(.*?)</t>", RegexOption.DOT_MATCHES_ALL).find(body)?.groupValues?.get(1)
                     ?: ""
-                if (Regex("""t=["']s["']""").containsMatchIn(attributes)) shared.getOrNull(raw.toIntOrNull() ?: -1).orEmpty()
-                else decodeXml(raw)
+                val displayed = if (Regex("""t=["']s["']""").containsMatchIn(attributes)) shared.getOrNull(raw.toIntOrNull() ?: -1).orEmpty() else decodeXml(raw)
+                Regex("<f(?:\\s[^>]*)?>(.*?)</f>", RegexOption.DOT_MATCHES_ALL).find(body)?.groupValues?.get(1)?.let { "=${decodeXml(it)} → $displayed" } ?: displayed
             }.toList()
         }.toList()
-    ExcelPreviewData(rows)
+        ExcelSheetPreview(workbookNames.getOrNull(sheetIndex) ?: "Hoja ${sheetIndex + 1}", rows, frozen)
+    })
 }
 
 private fun decodeXml(value: String): String = value
@@ -601,7 +642,7 @@ private fun decodeXml(value: String): String = value
     .replace("&apos;", "'").replace("&amp;", "&")
 
 @Composable
-private fun ExcelPreview(file: File) {
+private fun ExcelPreview(file: File, search: String) {
     var data by remember(file.path, file.lastModified()) { mutableStateOf<ExcelPreviewData?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(file.path, file.lastModified()) {
@@ -609,12 +650,17 @@ private fun ExcelPreview(file: File) {
             runCatching { parseBasicXlsx(file) }.onSuccess { data = it }.onFailure { error = it.message }
         }
     }
-    val sheet = data
-    if (sheet == null) return PreviewMessage(error ?: "Leyendo primera hoja de Excel…")
+    val workbook = data
+    if (workbook == null) return PreviewMessage(error ?: "Leyendo libro de Excel…")
+    var selected by remember(file.path) { mutableStateOf(0) }
+    val sheet = workbook.sheets.getOrNull(selected) ?: return PreviewMessage("El libro no contiene hojas.")
     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-        Text("Primera hoja · ${sheet.rows.size} filas", Modifier.padding(10.dp), fontWeight = FontWeight.Black)
+        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
+            workbook.sheets.forEachIndexed { index, item -> TextButton(onClick = { selected = index }) { Text(if (selected == index) "● ${item.name}" else item.name) } }
+        }
+        Text("${sheet.rows.size} filas${sheet.frozen?.let { " · panel congelado: $it" }.orEmpty()} · fórmulas visibles", Modifier.padding(10.dp), fontWeight = FontWeight.Black)
         Column(Modifier.horizontalScroll(rememberScrollState())) {
-            sheet.rows.forEachIndexed { index, row -> CsvRow(row, header = index == 0, shaded = index % 2 == 0) }
+            sheet.rows.filter { row -> search.isBlank() || row.any { it.contains(search, true) } }.forEachIndexed { index, row -> CsvRow(row, header = index == 0, shaded = index % 2 == 0) }
         }
     }
 }

@@ -29,6 +29,9 @@ internal class AutomationRepository(filesDir: File) {
             parameters = automation.parameters.entries.take(20).associate { (key, value) ->
                 key.trim() to value.take(1_000)
             }.filterKeys { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) },
+            parameterDefinitions = automation.parameterDefinitions.take(20).map {
+                it.copy(name = it.name.trim(), defaultValue = it.defaultValue.take(1_000))
+            }.filter { it.name.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) },
             timeoutSeconds = automation.timeoutSeconds.coerceIn(5, MAX_AUTOMATION_TIMEOUT_SECONDS),
             summary = automation.summary.limitedAutomationSummary(),
             runHistory = automation.runHistory.takeLast(MAX_AUTOMATION_HISTORY).map { record ->
@@ -56,6 +59,25 @@ internal class AutomationRepository(filesDir: File) {
         if (next.size == _automations.value.size) return@synchronized false
         persistLocked(next)
         true
+    }
+
+    fun updateHighlightedResourcePath(
+        projectPath: String,
+        oldPath: String,
+        newPath: String,
+    ): Int = synchronized(lock) {
+        var changed = 0
+        val next = _automations.value.map { automation ->
+            if (
+                automation.projectPath == projectPath &&
+                automation.highlightedResultPath == oldPath
+            ) {
+                changed++
+                automation.copy(highlightedResultPath = newPath)
+            } else automation
+        }
+        if (changed > 0) persistLocked(next)
+        changed
     }
 
     private fun upsertLocked(automation: ScriptAutomation): ScriptAutomation {
@@ -105,6 +127,9 @@ private fun ScriptAutomation.toJson(): JSONObject = JSONObject()
     .put("enabled", enabled)
     .putNullable("highlightedResultPath", highlightedResultPath)
     .put("parameters", JSONObject(parameters))
+    .put("parameterDefinitions", JSONArray().apply {
+        parameterDefinitions.forEach { put(JSONObject().put("name", it.name).put("type", it.type.name).put("defaultValue", it.defaultValue)) }
+    })
     .put("lastStatus", lastStatus.name)
     .putNullable("lastRunAtMillis", lastRunAtMillis)
     .putNullable("nextRunAtMillis", nextRunAtMillis)
@@ -146,6 +171,14 @@ private fun JSONObject.toAutomation(): ScriptAutomation {
         highlightedResultPath = nullableString("highlightedResultPath"),
         parameters = optJSONObject("parameters")?.let { parameters ->
             parameters.keys().asSequence().associateWith { parameters.optString(it) }
+        }.orEmpty(),
+        parameterDefinitions = optJSONArray("parameterDefinitions")?.let { array ->
+            (0 until array.length()).mapNotNull { index -> runCatching {
+                val item = array.getJSONObject(index)
+                AutomationParameter(item.getString("name"), enumValueOf(item.optString("type", AutomationParameterType.Text.name)), item.optString("defaultValue"))
+            }.getOrNull() }
+        } ?: optJSONObject("parameters")?.let { legacy ->
+            legacy.keys().asSequence().map { AutomationParameter(it, defaultValue = legacy.optString(it)) }.toList()
         }.orEmpty(),
         lastStatus = runCatching {
             enumValueOf<AutomationRunStatus>(optString("lastStatus", AutomationRunStatus.Pending.name))

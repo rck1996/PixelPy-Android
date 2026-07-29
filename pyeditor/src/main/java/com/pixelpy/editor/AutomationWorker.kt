@@ -49,11 +49,12 @@ class AutomationWorker(
                 PythonRuntimeCoordinator.runExclusive {
                     val python = Python.getInstance()
                     val environment = requireNotNull(python.getModule("os").get("environ"))
-                    val previous = automation.parameters.mapValues { (key, _) ->
+                    val runtimeParameters = automation.resolvedParameters()
+                    val previous = runtimeParameters.mapValues { (key, _) ->
                         if (environment.callAttr("__contains__", key).toBoolean()) environment.callAttr("get", key).toString() else null
                     }
                     try {
-                        automation.parameters.forEach { (key, value) -> environment.callAttr("__setitem__", key, value) }
+                        runtimeParameters.forEach { (key, value) -> environment.callAttr("__setitem__", key, value) }
                         val value = python.getModule("runner").callAttr(
                             "execute",
                             source,
@@ -219,3 +220,14 @@ class AutomationWorker(
         const val KEY_RUN_ORIGIN = "run_origin"
     }
 }
+
+internal fun ScriptAutomation.resolvedParameters(): Map<String, String> =
+    if (parameterDefinitions.isEmpty()) parameters else parameterDefinitions.associate { parameter ->
+        val value = parameter.defaultValue
+        when (parameter.type) {
+            AutomationParameterType.Number -> require(value.toDoubleOrNull() != null) { "${parameter.name} debe ser numérico" }
+            AutomationParameterType.Boolean -> require(value.lowercase() in setOf("true", "false", "1", "0")) { "${parameter.name} debe ser verdadero o falso" }
+            else -> Unit
+        }
+        parameter.name to value
+    }

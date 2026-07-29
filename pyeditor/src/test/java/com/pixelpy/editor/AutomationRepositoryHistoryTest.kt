@@ -29,6 +29,10 @@ class AutomationRepositoryHistoryTest {
                 scriptPath = "main.py",
                 scheduleType = AutomationScheduleType.Daily,
                 parameters = mapOf("CIUDAD" to "Santiago", "LIMITE" to "25"),
+                parameterDefinitions = listOf(
+                    AutomationParameter("TOKEN", AutomationParameterType.Secret, "abc"),
+                    AutomationParameter("LIMITE", AutomationParameterType.Number, "25"),
+                ),
                 runHistory = history,
             )
         )
@@ -39,6 +43,8 @@ class AutomationRepositoryHistoryTest {
         assertEquals("run 3", restored.runHistory.first().summary)
         assertEquals(AutomationRunOrigin.Widget, restored.runHistory.last().origin)
         assertEquals("Santiago", restored.parameters["CIUDAD"])
+        assertEquals(AutomationParameterType.Secret, restored.parameterDefinitions.first().type)
+        assertEquals("25", restored.resolvedParameters()["LIMITE"])
         assertTrue(restored.runHistory.flatMap { it.generatedFiles }.none { it.startsWith('/') || it.contains(":\\") })
     }
 }
