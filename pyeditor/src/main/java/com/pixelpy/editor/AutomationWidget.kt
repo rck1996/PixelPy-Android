@@ -156,13 +156,11 @@ class AutomationWidgetProvider : AppWidgetProvider() {
                     Toast.makeText(context, "La ejecución ya está solicitada o la automatización está pausada", Toast.LENGTH_SHORT).show()
                 }
             }
-            ACTION_OPEN -> openPublishedArtifact(context, automationId)
         }
     }
 
     companion object {
         internal const val ACTION_RUN = "com.pixelpy.editor.action.RUN_AUTOMATION"
-        internal const val ACTION_OPEN = "com.pixelpy.editor.action.OPEN_AUTOMATION_RESULT"
 
         internal fun updateForAutomation(context: Context, automationId: String) {
             val manager = AppWidgetManager.getInstance(context)
@@ -191,7 +189,10 @@ class AutomationWidgetProvider : AppWidgetProvider() {
                 setTextViewText(R.id.widget_section_label, state.sectionLabel)
                 setTextColor(R.id.widget_open, if (state.canOpen) 0xFF191919.toInt() else 0xFF9A9489.toInt())
                 if (id != null) {
-                    setOnClickPendingIntent(R.id.widget_open, actionIntent(context, widgetId, id, ACTION_OPEN, 1))
+                    setOnClickPendingIntent(
+                        R.id.widget_open,
+                        openResultIntent(context, widgetId, automation) ?: detailsIntent(context, widgetId, id),
+                    )
                     setOnClickPendingIntent(R.id.widget_run, actionIntent(context, widgetId, id, ACTION_RUN, 2))
                     setOnClickPendingIntent(R.id.widget_root, detailsIntent(context, widgetId, id))
                 }
@@ -214,6 +215,35 @@ class AutomationWidgetProvider : AppWidgetProvider() {
                 putExtra(EXTRA_AUTOMATION_ID, automationId)
             }
             return PendingIntent.getBroadcast(context, widgetId * 10 + actionCode, intent, widgetPendingIntentFlags())
+        }
+
+        private fun openResultIntent(
+            context: Context,
+            widgetId: Int,
+            automation: ScriptAutomation?,
+        ): PendingIntent? {
+            val relative = automation?.publishedArtifactPath ?: return null
+            val file = runCatching {
+                AutomationPathValidator.resolvePublished(context.filesDir, relative)
+            }.getOrNull()?.takeIf(File::isFile) ?: return null
+            val uri = runCatching {
+                FileProvider.getUriForFile(context, "com.pixelpy.editor.files", file)
+            }.getOrNull() ?: return null
+            val view = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, automation.publishedMimeType ?: mimeTypeForFile(file))
+                clipData = ClipData.newRawUri(file.name, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val chooser = Intent.createChooser(view, "Abrir ${file.name}").apply {
+                clipData = ClipData.newRawUri(file.name, uri)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            return PendingIntent.getActivity(
+                context,
+                widgetId * 10 + 1,
+                chooser,
+                widgetPendingIntentFlags(),
+            )
         }
 
         private fun detailsIntent(context: Context, widgetId: Int, automationId: String): PendingIntent {
