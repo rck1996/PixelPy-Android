@@ -740,6 +740,8 @@ class MainActivity : ComponentActivity() {
     var showOutline by remember { mutableStateOf(false) }
     var showVersions by remember { mutableStateOf(false) }
     var moreTools by remember { mutableStateOf(false) }
+    val editorVerticalScroll = rememberScrollState()
+    val editorHorizontalScroll = rememberScrollState()
     LaunchedEffect(fontSize) { context.getSharedPreferences("pixelpy", 0).edit().putFloat("font_size", fontSize).apply() }
     val completionPrefix = code.text.substring(0, code.selection.min).takeLastWhile { it.isLetterOrDigit() || it == '_' }
     val completions = if (completionPrefix.length >= 2) completionItems(code.text).filter { it.startsWith(completionPrefix, ignoreCase = true) && !it.equals(completionPrefix, true) }.take(5) else emptyList()
@@ -794,11 +796,10 @@ class MainActivity : ComponentActivity() {
         Spacer(Modifier.height(8.dp))
         Box(Modifier.weight(1f).fillMaxWidth().padding(end = 5.dp, bottom = 5.dp)) {
             Box(Modifier.matchParentSize().offset(5.dp, 5.dp).background(Ink))
-            Row(Modifier.fillMaxSize().background(Color(0xFF20232A)).border(3.dp, Ink).padding(10.dp)) {
-                val lines = code.text.count { it == '\n' } + 1
-                Text((1..lines).joinToString("\n"), color = Color(0xFF7D8590), fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, lineHeight = (fontSize + 7).sp, textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            Row(Modifier.fillMaxSize().background(Color(0xFF20232A)).border(3.dp, Ink).verticalScroll(editorVerticalScroll).padding(10.dp)) {
+                Text(lineNumberText(code.text), Modifier.width(46.dp), color = Color(0xFF7D8590), fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, lineHeight = (fontSize + 7).sp, textAlign = androidx.compose.ui.text.style.TextAlign.End)
                 Spacer(Modifier.width(10.dp)); Box(Modifier.width(2.dp).fillMaxHeight().background(Color(0xFF444C56))); Spacer(Modifier.width(10.dp))
-                BasicTextField(value = code, onValueChange = { raw -> change(autoIndent(code, raw)) }, modifier = Modifier.testTag("editor-input").fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()), textStyle = TextStyle(color = Color.White, fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, lineHeight = (fontSize + 7).sp), cursorBrush = SolidColor(Yellow), visualTransformation = PythonHighlight)
+                BasicTextField(value = code, onValueChange = { raw -> change(autoIndent(code, raw)) }, modifier = Modifier.testTag("editor-input").fillMaxSize().horizontalScroll(editorHorizontalScroll), textStyle = TextStyle(color = Color.White, fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, lineHeight = (fontSize + 7).sp), cursorBrush = SolidColor(Yellow), visualTransformation = PythonHighlight)
             }
         }
         if (completions.isNotEmpty()) {
@@ -1003,6 +1004,9 @@ private fun autoIndent(old: TextFieldValue, next: TextFieldValue): TextFieldValu
     val cursor = next.selection.start
     return TextFieldValue(next.text.substring(0, cursor) + indent + next.text.substring(cursor), TextRange(cursor + indent.length))
 }
+
+internal fun lineNumberText(source: String): String =
+    (1..(source.count { it == '\n' } + 1)).joinToString("\n")
 
 private fun insertPair(current: TextFieldValue, value: String, onChange: (TextFieldValue) -> Unit) {
     val start = current.selection.min; val end = current.selection.max
