@@ -32,6 +32,11 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
   <img src="docs/screenshots/widget.png" alt="Widget de resultados de PixelPy" width="46%" />
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/result-csv-table.png" alt="Tabla CSV interactiva de PixelPy" width="46%" />
+  <img src="docs/screenshots/result-json-tree.png" alt="Árbol JSON plegable de PixelPy" width="46%" />
+</p>
+
 ## Resultados publicados
 
 El botón **VER RESULTADO** del widget, **ABRIR RESULTADO** en automatizaciones y **VER RESULTADO** en la consola llevan al mismo visor:
@@ -66,7 +71,7 @@ El APK se genera en `pyeditor/build/outputs/apk/development/debug/`.
 
 ## Versión
 
-La versión publicada actual es `1.2.1`. Añade un visor interno de resultados, una apertura más confiable desde el widget y una presentación más clara del archivo publicado.
+La versión publicada actual es `1.2.2`. Añade el visor desde la consola, galería para múltiples resultados, tablas CSV y árboles JSON plegables.
 
 Las ejecuciones programadas son aproximadas: Android puede retrasarlas por batería, Doze o restricciones del sistema.
 
