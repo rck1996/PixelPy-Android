@@ -48,16 +48,43 @@ class AutomationBridgeAndWidgetTest {
         assertEquals(AutomationWidgetStatus.Success, success.status)
         assertEquals(R.drawable.automation_widget_status_success, success.status.backgroundRes)
         assertTrue(success.canOpen)
-        val error = automationWidgetState(sample(AutomationRunStatus.Error))
+        val error = automationWidgetState(sample(AutomationRunStatus.Error).copy(summary = "No se generó reporte.xlsx"))
         assertEquals(AutomationWidgetStatus.Error, error.status)
         assertEquals(R.drawable.automation_widget_status_error, error.status.backgroundRes)
         assertFalse(error.canOpen)
+        assertEquals("ERROR · TOCA PARA VER", error.sectionLabel)
+        assertEquals("No se generó reporte.xlsx", error.artifactName)
         val missing = automationWidgetState(null)
         assertEquals(AutomationWidgetStatus.Unavailable, missing.status)
         assertEquals(R.drawable.automation_widget_status_error, missing.status.backgroundRes)
         assertEquals("Automatización no disponible", missing.status.label)
     }
 
+
+    @Test
+    fun copiedDiagnosticIncludesOriginDurationAndGeneratedFiles() {
+        val automation = sample(AutomationRunStatus.Error).copy(
+            summary = "Resultado no actualizado",
+            runHistory = listOf(
+                AutomationRunRecord(
+                    startedAtMillis = 1_000,
+                    finishedAtMillis = 2_500,
+                    durationMillis = 1_500,
+                    origin = AutomationRunOrigin.Widget,
+                    status = AutomationRunStatus.Error,
+                    summary = "Resultado no actualizado",
+                    generatedFiles = listOf("logs/run.txt"),
+                )
+            ),
+        )
+
+        val diagnostic = automationDiagnosticText(automation)
+
+        assertTrue(diagnostic.contains("Desde el widget"))
+        assertTrue(diagnostic.contains("1.5 s"))
+        assertTrue(diagnostic.contains("logs/run.txt"))
+        assertTrue(diagnostic.contains("Resultado no actualizado"))
+    }
     @Test
     fun automationWithoutHighlightedResultKeepsRunAvailableAndOpenDisabled() {
         val automation = sample(AutomationRunStatus.Pending)

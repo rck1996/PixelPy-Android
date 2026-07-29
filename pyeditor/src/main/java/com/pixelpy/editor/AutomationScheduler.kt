@@ -16,7 +16,7 @@ import kotlin.math.max
 internal interface AutomationWorkGateway {
     fun replaceScheduled(automation: ScriptAutomation, initialDelayMillis: Long)
     fun appendScheduled(automation: ScriptAutomation, initialDelayMillis: Long)
-    fun enqueueImmediate(automation: ScriptAutomation)
+    fun enqueueImmediate(automation: ScriptAutomation, origin: AutomationRunOrigin)
     fun cancel(automationId: String)
 }
 
@@ -63,7 +63,7 @@ internal class AutomationScheduler(
         return save(current.copy(enabled = true, lastStatus = AutomationRunStatus.Pending))
     }
 
-    fun runNow(id: String): Boolean {
+    fun runNow(id: String, origin: AutomationRunOrigin = AutomationRunOrigin.App): Boolean {
         val current = repository.get(id)?.takeIf { it.enabled } ?: return false
         val now = nowMillis()
         val previous = immediateRequests.put(id, now)
@@ -74,7 +74,7 @@ internal class AutomationScheduler(
                 summary = "Ejecución solicitada; esperando las restricciones de Android.",
             )
         )
-        gateway.enqueueImmediate(current)
+        gateway.enqueueImmediate(current, origin)
         onChanged(id)
         return true
     }
@@ -117,7 +117,7 @@ internal class WorkManagerAutomationGateway(context: Context) : AutomationWorkGa
         workManager.enqueueUniqueWork(
             scheduledName(automation.id),
             ExistingWorkPolicy.REPLACE,
-            automation.request(initialDelayMillis, manual = false),
+            automation.request(initialDelayMillis, manual = false, origin = AutomationRunOrigin.Scheduled),
         )
     }
 
@@ -125,12 +125,12 @@ internal class WorkManagerAutomationGateway(context: Context) : AutomationWorkGa
         workManager.enqueueUniqueWork(
             scheduledName(automation.id),
             ExistingWorkPolicy.APPEND_OR_REPLACE,
-            automation.request(initialDelayMillis, manual = false),
+            automation.request(initialDelayMillis, manual = false, origin = AutomationRunOrigin.Scheduled),
         )
     }
 
-    override fun enqueueImmediate(automation: ScriptAutomation) {
-        val request = automation.request(0, manual = true)
+    override fun enqueueImmediate(automation: ScriptAutomation, origin: AutomationRunOrigin) {
+        val request = automation.request(0, manual = true, origin = origin)
         workManager.enqueueUniqueWork(immediateName(automation.id), ExistingWorkPolicy.KEEP, request)
     }
 
@@ -146,12 +146,17 @@ internal class WorkManagerAutomationGateway(context: Context) : AutomationWorkGa
         .setRequiresBatteryNotLow(requiresBatteryNotLow)
         .build()
 
-    private fun ScriptAutomation.request(initialDelayMillis: Long, manual: Boolean) =
+    private fun ScriptAutomation.request(
+        initialDelayMillis: Long,
+        manual: Boolean,
+        origin: AutomationRunOrigin,
+    ) =
         OneTimeWorkRequestBuilder<AutomationWorker>()
             .setInputData(
                 workDataOf(
                     AutomationWorker.KEY_AUTOMATION_ID to id,
                     AutomationWorker.KEY_MANUAL_RUN to manual,
+                    AutomationWorker.KEY_RUN_ORIGIN to origin.name,
                 )
             )
             .setConstraints(toWorkConstraints())

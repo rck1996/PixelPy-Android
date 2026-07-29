@@ -63,6 +63,7 @@ internal data class AutomationWidgetState(
     val status: AutomationWidgetStatus,
     val updated: String,
     val artifactName: String,
+    val sectionLabel: String,
     val canOpen: Boolean,
     val canRun: Boolean,
 )
@@ -74,6 +75,7 @@ internal fun automationWidgetState(automation: ScriptAutomation?): AutomationWid
             status = AutomationWidgetStatus.Unavailable,
             updated = "Abre PixelPy para configurarla",
             artifactName = "Sin resultado",
+            sectionLabel = "ESTADO",
             canOpen = false,
             canRun = false,
         )
@@ -85,16 +87,20 @@ internal fun automationWidgetState(automation: ScriptAutomation?): AutomationWid
         automation.lastStatus == AutomationRunStatus.Success -> AutomationWidgetStatus.Success
         else -> AutomationWidgetStatus.Error
     }
-    val updated = automation.publishedAtMillis?.let {
-        "Actualizado ${formatWidgetTime(it)}"
-    } ?: automation.lastRunAtMillis?.let {
-        "Ejecutado ${formatWidgetTime(it)}"
-    } ?: "Todavía no se ejecutó"
+    val updated = when {
+        status == AutomationWidgetStatus.Error && automation.lastRunAtMillis != null ->
+            "Falló ${formatWidgetTime(automation.lastRunAtMillis)}"
+        automation.publishedAtMillis != null -> "Actualizado ${formatWidgetTime(automation.publishedAtMillis)}"
+        automation.lastRunAtMillis != null -> "Ejecutado ${formatWidgetTime(automation.lastRunAtMillis)}"
+        else -> "Todavía no se ejecutó"
+    }
     return AutomationWidgetState(
         name = automation.name,
         status = status,
         updated = updated,
-        artifactName = automation.publishedArtifactPath?.substringAfterLast('/') ?: "Sin resultado publicado",
+        sectionLabel = if (status == AutomationWidgetStatus.Error) "ERROR · TOCA PARA VER" else "ÚLTIMO RESULTADO",
+        artifactName = if (status == AutomationWidgetStatus.Error) compactWidgetSummary(automation.summary)
+            else automation.publishedArtifactPath?.substringAfterLast('/') ?: "Sin resultado publicado",
         canOpen = automation.publishedArtifactPath != null,
         canRun = true,
     )
@@ -102,6 +108,10 @@ internal fun automationWidgetState(automation: ScriptAutomation?): AutomationWid
 
 internal fun automationWidgetConfigurationNotice(automation: ScriptAutomation): String? =
     AUTOMATION_WITHOUT_RESULT_NOTICE.takeIf { automation.highlightedResultPath.isNullOrBlank() }
+
+internal fun compactWidgetSummary(summary: String): String = summary
+    .replace(Regex("\\s+"), " ").trim()
+    .ifBlank { "Abre PixelPy para ver el diagnóstico" }.take(96)
 
 private fun formatWidgetTime(millis: Long): String = Instant.ofEpochMilli(millis)
     .atZone(ZoneId.systemDefault())
@@ -142,7 +152,7 @@ class AutomationWidgetProvider : AppWidgetProvider() {
         when (intent.action) {
             ACTION_RUN -> {
                 val app = context.applicationContext as? PixelPyApp ?: return
-                if (!app.automationScheduler.runNow(automationId)) {
+                if (!app.automationScheduler.runNow(automationId, AutomationRunOrigin.Widget)) {
                     Toast.makeText(context, "La ejecución ya está solicitada o la automatización está pausada", Toast.LENGTH_SHORT).show()
                 }
             }
@@ -178,10 +188,12 @@ class AutomationWidgetProvider : AppWidgetProvider() {
                 setTextViewText(R.id.widget_updated, state.updated)
                 setTextViewText(R.id.widget_artifact, state.artifactName)
                 setInt(R.id.widget_status, "setBackgroundResource", state.status.backgroundRes)
+                setTextViewText(R.id.widget_section_label, state.sectionLabel)
                 setTextColor(R.id.widget_open, if (state.canOpen) 0xFF191919.toInt() else 0xFF9A9489.toInt())
                 if (id != null) {
                     setOnClickPendingIntent(R.id.widget_open, actionIntent(context, widgetId, id, ACTION_OPEN, 1))
                     setOnClickPendingIntent(R.id.widget_run, actionIntent(context, widgetId, id, ACTION_RUN, 2))
+                    setOnClickPendingIntent(R.id.widget_root, detailsIntent(context, widgetId, id))
                 }
                 setBoolean(R.id.widget_open, "setEnabled", state.canOpen)
                 setBoolean(R.id.widget_run, "setEnabled", state.canRun)
@@ -202,6 +214,19 @@ class AutomationWidgetProvider : AppWidgetProvider() {
                 putExtra(EXTRA_AUTOMATION_ID, automationId)
             }
             return PendingIntent.getBroadcast(context, widgetId * 10 + actionCode, intent, widgetPendingIntentFlags())
+        }
+
+        private fun detailsIntent(context: Context, widgetId: Int, automationId: String): PendingIntent {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                putExtra(EXTRA_AUTOMATION_ID, automationId)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            return PendingIntent.getActivity(
+                context,
+                widgetId * 10 + 3,
+                intent,
+                widgetPendingIntentFlags(),
+            )
         }
     }
 }

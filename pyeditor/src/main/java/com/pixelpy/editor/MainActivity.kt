@@ -74,21 +74,24 @@ class InputBridge(private val onPrompt: (String) -> Unit) {
 
 class MainActivity : ComponentActivity() {
     private var requestedAutomationId by mutableStateOf<String?>(null)
+    private var requestedAutomationRequest by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestedAutomationId = intent.getStringExtra(EXTRA_AUTOMATION_ID)
-        setContent { PixelPy(requestedAutomationId) }
+        requestedAutomationRequest++
+        setContent { PixelPy(requestedAutomationId, requestedAutomationRequest) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         requestedAutomationId = intent.getStringExtra(EXTRA_AUTOMATION_ID)
+        requestedAutomationRequest++
     }
 }
 
-@Composable fun PixelPy(requestedAutomationId: String? = null) {
+@Composable fun PixelPy(requestedAutomationId: String? = null, requestedAutomationRequest: Int = 0) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val app = context.applicationContext as PixelPyApp
     val scope = rememberCoroutineScope()
@@ -142,6 +145,8 @@ class MainActivity : ComponentActivity() {
     var lastErrorLine by remember { mutableStateOf<Int?>(null) }
     var tab by remember { mutableStateOf(Tab.valueOf(initialSession.tab)) }
     var showAutomations by rememberSaveable { mutableStateOf(requestedAutomationId != null) }
+    var automationFocusId by remember { mutableStateOf(requestedAutomationId) }
+    var automationFocusRequest by remember { mutableIntStateOf(requestedAutomationRequest) }
     var newDialog by remember { mutableStateOf(false) }
     var newProjectDialog by remember { mutableStateOf(false) }
     var resourceVersion by remember { mutableIntStateOf(0) }
@@ -155,8 +160,10 @@ class MainActivity : ComponentActivity() {
         ?: SaveStatus.Saved
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    LaunchedEffect(requestedAutomationId) {
+    LaunchedEffect(requestedAutomationId, requestedAutomationRequest) {
+        automationFocusId = requestedAutomationId
         if (requestedAutomationId != null) showAutomations = true
+        automationFocusRequest = requestedAutomationRequest
     }
 
     LaunchedEffect(Unit) {
@@ -462,6 +469,33 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    fun testCurrentAsAutomation() {
+        transition {
+            if (!flushPendingSave(current)) return@transition
+            val root = projectsRoot.canonicalFile
+            val projectPath = runCatching { dir.canonicalFile.relativeTo(root).invariantSeparatorsPath }.getOrNull()
+            val scriptPath = runCatching { current.canonicalFile.relativeTo(dir.canonicalFile).invariantSeparatorsPath }.getOrNull()
+            val automation = app.automationRepository.automations.value.firstOrNull {
+                it.enabled && it.projectPath == projectPath && it.scriptPath == scriptPath
+            }
+            if (automation == null) {
+                showAutomations = true
+                automationFocusId = null
+                android.widget.Toast.makeText(
+                    context,
+                    "Crea una automatización para este script y luego pruébala.",
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+            } else {
+                app.automationScheduler.runNow(automation.id, AutomationRunOrigin.EditorTest)
+                automationFocusId = automation.id
+                showAutomations = true
+                automationFocusRequest++
+                android.widget.Toast.makeText(context, "Prueba enviada al mismo entorno del Worker", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     MaterialTheme(colorScheme = lightColorScheme(primary = Ink, background = Paper, surface = Paper)) {
         Scaffold(modifier = Modifier.testTag("pixelpy-root"), containerColor = Paper, topBar = {
             Row(Modifier.fillMaxWidth().background(Yellow).statusBarsPadding().height(68.dp).border(3.dp, Ink).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -493,7 +527,9 @@ class MainActivity : ComponentActivity() {
                         currentProject = dir,
                         currentScript = current,
                         flushCurrent = { flushPendingSave(current) },
+                        requestedAutomationId = automationFocusId,
                         onBack = { showAutomations = false },
+                        requestedAutomationRequest = automationFocusRequest,
                     )
                 } else when (tab) {
                     Tab.Projects -> Projects(remember(projectVersion) { projectsRoot.listFiles { f -> f.isDirectory }?.sortedBy { it.name } ?: emptyList() }, dir, files, remember(dir, resourceVersion) { dir.listFiles { f -> f.isFile && f.extension != "py" }?.sortedBy { it.name } ?: emptyList() }, current, onProject = ::switchProject, onNewProject = { newProjectDialog = true }, onImportProject = { projectImportLauncher.launch(arrayOf("application/zip", "application/octet-stream")) }, onExportProject = { project ->
@@ -551,7 +587,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }, onShare = ::shareFile, onAutomations = { showAutomations = true })
-                    Tab.Editor -> Editor(files, current, code, saveStatus, onOpen = ::open, onCode = { next ->
+                    Tab.Editor -> Editor(files, current, code, saveStatus, onOpen = ::open, onTestAutomation = ::testCurrentAsAutomation, onCode = { next ->
                         val textChanged = next.text != code.text
                         selectionReference.set(next.selection)
                         code = next
@@ -680,7 +716,7 @@ class MainActivity : ComponentActivity() {
     if (trash) TrashDialog(selectedProject, onDismiss = { trash = false }) { onTrashChanged() }
 }
 
-@Composable private fun Editor(files: List<File>, current: File, code: TextFieldValue, saveStatus: SaveStatus, onOpen: (File) -> Unit, onCode: (TextFieldValue) -> Unit) {
+@Composable private fun Editor(files: List<File>, current: File, code: TextFieldValue, saveStatus: SaveStatus, onOpen: (File) -> Unit, onTestAutomation: () -> Unit, onCode: (TextFieldValue) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var undo by remember { mutableStateOf<List<TextFieldValue>>(emptyList()) }
     var redo by remember { mutableStateOf<List<TextFieldValue>>(emptyList()) }
@@ -703,7 +739,32 @@ class MainActivity : ComponentActivity() {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             files.forEach { file -> Surface(onClick = { onOpen(file) }, modifier = Modifier.testTag("editor-file-${file.name}"), color = if (file == current) Yellow else Color.White, border = BorderStroke(2.dp, Ink), shape = RoundedCornerShape(0.dp)) { Text((if (file == current) "● " else "") + file.name, Modifier.padding(horizontal = 11.dp, vertical = 7.dp), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.sp) } }
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Column { Text("EDITOR", fontWeight = FontWeight.Black, fontSize = 18.sp); val statusText = when (saveStatus) { SaveStatus.Editing -> "● EDITANDO"; SaveStatus.Saving -> "● GUARDANDO"; SaveStatus.Saved -> "● GUARDADO"; SaveStatus.Error -> "● ERROR AL GUARDAR" }; Text(statusText, Modifier.testTag("save-status"), color = if (saveStatus == SaveStatus.Error) Color(0xFFC62828) else Color(0xFF16853B), fontWeight = FontWeight.Black, fontSize = 9.sp) }; Spacer(Modifier.weight(1f)); IconButton(onClick = { searching = !searching }) { Icon(Icons.Outlined.Search, "Buscar") }; IconButton(onClick = { if (undo.isNotEmpty()) { redo = redo + code; val previous = undo.last(); undo = undo.dropLast(1); onCode(previous) } }, enabled = undo.isNotEmpty()) { Icon(Icons.Outlined.Undo, "Deshacer") }; IconButton(onClick = { if (redo.isNotEmpty()) { undo = undo + code; val next = redo.last(); redo = redo.dropLast(1); onCode(next) } }, enabled = redo.isNotEmpty()) { Icon(Icons.Outlined.Redo, "Rehacer") }; Box { IconButton(onClick = { moreTools = true }) { Icon(Icons.Outlined.MoreVert, "Más herramientas") }; DropdownMenu(moreTools, { moreTools = false }) { DropdownMenuItem({ Text("Estructura del código") }, { moreTools = false; showOutline = true }, leadingIcon = { Icon(Icons.Outlined.AccountTree, null) }); DropdownMenuItem({ Text("Versiones anteriores") }, { moreTools = false; showVersions = true }, leadingIcon = { Icon(Icons.Outlined.Restore, null) }); DropdownMenuItem({ Text("Reducir texto") }, { moreTools = false; fontSize = (fontSize - 1).coerceAtLeast(11f) }, leadingIcon = { Text("A−", fontWeight = FontWeight.Black) }); DropdownMenuItem({ Text("Aumentar texto") }, { moreTools = false; fontSize = (fontSize + 1).coerceAtMost(24f) }, leadingIcon = { Text("A+", fontWeight = FontWeight.Black) }) } } }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column {
+                Text("EDITOR", fontWeight = FontWeight.Black, fontSize = 18.sp)
+                val statusText = when (saveStatus) {
+                    SaveStatus.Editing -> "● EDITANDO"
+                    SaveStatus.Saving -> "● GUARDANDO"
+                    SaveStatus.Saved -> "● GUARDADO"
+                    SaveStatus.Error -> "● ERROR AL GUARDAR"
+                }
+                Text(statusText, Modifier.testTag("save-status"), color = if (saveStatus == SaveStatus.Error) Color(0xFFC62828) else Color(0xFF16853B), fontWeight = FontWeight.Black, fontSize = 9.sp)
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { searching = !searching }) { Icon(Icons.Outlined.Search, "Buscar") }
+            IconButton(onClick = { if (undo.isNotEmpty()) { redo = redo + code; val previous = undo.last(); undo = undo.dropLast(1); onCode(previous) } }, enabled = undo.isNotEmpty()) { Icon(Icons.Outlined.Undo, "Deshacer") }
+            IconButton(onClick = { if (redo.isNotEmpty()) { undo = undo + code; val next = redo.last(); redo = redo.dropLast(1); onCode(next) } }, enabled = redo.isNotEmpty()) { Icon(Icons.Outlined.Redo, "Rehacer") }
+            Box {
+                IconButton(onClick = { moreTools = true }) { Icon(Icons.Outlined.MoreVert, "Más herramientas") }
+                DropdownMenu(moreTools, { moreTools = false }) {
+                    DropdownMenuItem({ Text("Probar como automatización") }, { moreTools = false; onTestAutomation() }, leadingIcon = { Icon(Icons.Outlined.Schedule, null) })
+                    DropdownMenuItem({ Text("Estructura del código") }, { moreTools = false; showOutline = true }, leadingIcon = { Icon(Icons.Outlined.AccountTree, null) })
+                    DropdownMenuItem({ Text("Versiones anteriores") }, { moreTools = false; showVersions = true }, leadingIcon = { Icon(Icons.Outlined.Restore, null) })
+                    DropdownMenuItem({ Text("Reducir texto") }, { moreTools = false; fontSize = (fontSize - 1).coerceAtLeast(11f) }, leadingIcon = { Text("A−", fontWeight = FontWeight.Black) })
+                    DropdownMenuItem({ Text("Aumentar texto") }, { moreTools = false; fontSize = (fontSize + 1).coerceAtMost(24f) }, leadingIcon = { Text("A+", fontWeight = FontWeight.Black) })
+                }
+            }
+        }
         if (searching) {
             Column(Modifier.fillMaxWidth().background(Yellow).border(2.dp, Ink).padding(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {

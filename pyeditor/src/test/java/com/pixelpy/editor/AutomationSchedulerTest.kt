@@ -35,11 +35,12 @@ class AutomationSchedulerTest {
         var now = 10_000L
         val fixture = fixture { now }
         val saved = fixture.scheduler.save(fixture.automation)
-        assertTrue(fixture.scheduler.runNow(saved.id))
+        assertTrue(fixture.scheduler.runNow(saved.id, AutomationRunOrigin.Widget))
         assertFalse(fixture.scheduler.runNow(saved.id))
         now += AutomationScheduler.IMMEDIATE_DEBOUNCE_MILLIS
-        assertTrue(fixture.scheduler.runNow(saved.id))
+        assertTrue(fixture.scheduler.runNow(saved.id, AutomationRunOrigin.EditorTest))
         assertEquals(2, fixture.gateway.immediate.size)
+        assertEquals(listOf(AutomationRunOrigin.Widget, AutomationRunOrigin.EditorTest), fixture.gateway.immediate.map { it.second })
     }
 
     private fun fixture(clock: () -> Long = { System.currentTimeMillis() }): Fixture {
@@ -66,7 +67,7 @@ class AutomationSchedulerTest {
 
     private class FakeGateway : AutomationWorkGateway {
         val replacements = mutableListOf<Pair<ScriptAutomation, Long>>()
-        val immediate = mutableListOf<ScriptAutomation>()
+        val immediate = mutableListOf<Pair<ScriptAutomation, AutomationRunOrigin>>()
         val cancelled = mutableListOf<String>()
         override fun replaceScheduled(automation: ScriptAutomation, initialDelayMillis: Long) {
             replacements += automation to initialDelayMillis
@@ -74,7 +75,7 @@ class AutomationSchedulerTest {
         override fun appendScheduled(automation: ScriptAutomation, initialDelayMillis: Long) {
             replacements += automation to initialDelayMillis
         }
-        override fun enqueueImmediate(automation: ScriptAutomation) { immediate += automation }
+        override fun enqueueImmediate(automation: ScriptAutomation, origin: AutomationRunOrigin) { immediate += automation to origin }
         override fun cancel(automationId: String) { cancelled += automationId }
     }
 }

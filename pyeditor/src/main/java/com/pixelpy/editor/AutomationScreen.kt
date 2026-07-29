@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,6 +75,8 @@ internal fun AutomationScreen(
     currentProject: File,
     currentScript: File,
     flushCurrent: suspend () -> Boolean,
+    requestedAutomationId: String? = null,
+    requestedAutomationRequest: Int = 0,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -82,6 +85,11 @@ internal fun AutomationScreen(
     var editor by remember { mutableStateOf<ScriptAutomation?>(null) }
     var editorVisible by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<ScriptAutomation?>(null) }
+    var detailAutomationId by remember { mutableStateOf(requestedAutomationId) }
+
+    LaunchedEffect(requestedAutomationId, requestedAutomationRequest, automations) {
+        if (automations.any { it.id == requestedAutomationId }) detailAutomationId = requestedAutomationId
+    }
 
     fun createDraft(): ScriptAutomation {
         val nextHour = ZonedDateTime.now().plusHours(1).withMinute(0).withSecond(0).withNano(0)
@@ -148,9 +156,10 @@ internal fun AutomationScreen(
                 automation = automation,
                 onEdit = { editor = automation; editorVisible = true },
                 onToggle = { enabled -> scope.launch(Dispatchers.IO) { scheduler.setEnabled(automation.id, enabled) } },
-                onRun = { scheduler.runNow(automation.id) },
+                onRun = { scheduler.runNow(automation.id, AutomationRunOrigin.App) },
                 onDelete = { deleteCandidate = automation },
                 onOpen = { openPublishedArtifact(context, automation.id) },
+                onDetails = { detailAutomationId = automation.id },
             )
         }
     }
@@ -182,6 +191,15 @@ internal fun AutomationScreen(
         )
     }
 
+    detailAutomationId?.let { id ->
+        automations.firstOrNull { it.id == id }?.let { automation ->
+            AutomationDetailsDialog(
+                automation = automation,
+                onDismiss = { detailAutomationId = null },
+                onRetry = { scheduler.runNow(automation.id, AutomationRunOrigin.App) },
+            )
+        }
+    }
     deleteCandidate?.let { automation ->
         AlertDialog(
             onDismissRequest = { deleteCandidate = null },
@@ -206,6 +224,7 @@ private fun AutomationCard(
     onRun: () -> Unit,
     onDelete: () -> Unit,
     onOpen: () -> Unit,
+    onDetails: () -> Unit,
 ) {
     val statusColor = when (automation.lastStatus) {
         AutomationRunStatus.Success -> AutomationGreen
@@ -237,10 +256,120 @@ private fun AutomationCard(
             Button(onClick = onRun, enabled = automation.enabled, modifier = Modifier.testTag("automation-run-${automation.id}")) { Text("EJECUTAR AHORA") }
             OutlinedButton(onClick = onOpen, enabled = automation.publishedArtifactPath != null) { Text("ABRIR RESULTADO") }
             OutlinedButton(onClick = onEdit) { Text("EDITAR") }
+            OutlinedButton(onClick = onDetails) { Text("DETALLES") }
             TextButton(onClick = onDelete) { Text("ELIMINAR") }
         }
     }
 }
+
+
+@Composable
+private fun AutomationDetailsDialog(
+    automation: ScriptAutomation,
+    onDismiss: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    val context = LocalContext.current
+    val latest = automation.runHistory.lastOrNull()
+    val statusColor = when (automation.lastStatus) {
+        AutomationRunStatus.Success -> AutomationGreen
+        AutomationRunStatus.Error -> AutomationPink
+        AutomationRunStatus.Running -> AutomationBlue
+        AutomationRunStatus.Pending -> AutomationYellow
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("DIAGNÓSTICO", fontWeight = FontWeight.Black) },
+        text = {
+            Column(
+                Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Surface(color = statusColor, modifier = Modifier.border(2.dp, AutomationInk)) {
+                    Text(
+                        automation.lastStatus.displayName(),
+                        Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                        fontWeight = FontWeight.Black,
+                    )
+                }
+                Text(automation.name, fontWeight = FontWeight.Black, fontSize = 20.sp)
+                Text("${automation.projectPath}/${automation.scriptPath}", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                Text("CAUSA / SALIDA", fontWeight = FontWeight.Black, fontSize = 11.sp)
+                Surface(color = Color.White, modifier = Modifier.fillMaxWidth().border(2.dp, AutomationInk)) {
+                    Text(
+                        automation.summary.ifBlank { "Todavía no hay un diagnóstico." },
+                        Modifier.padding(10.dp),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                    )
+                }
+                latest?.let { record ->
+                    Text(
+                        "${record.origin.displayName()} · ${formatAutomationMoment(record.finishedAtMillis)} · ${formatDuration(record.durationMillis)}",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                    )
+                    Text("ARCHIVOS DE ESTA EJECUCIÓN", fontWeight = FontWeight.Black, fontSize = 11.sp)
+                    Text(
+                        if (record.generatedFiles.isEmpty()) "Ningún archivo creado o modificado."
+                        else record.generatedFiles.joinToString("\n") { "• $it" },
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                    )
+                }
+                if (automation.runHistory.isNotEmpty()) {
+                    HorizontalDivider()
+                    Text("HISTORIAL LOCAL", fontWeight = FontWeight.Black, fontSize = 11.sp)
+                    automation.runHistory.takeLast(5).asReversed().forEach { record ->
+                        Text(
+                            "${if (record.status == AutomationRunStatus.Success) "✓" else "!"} " +
+                                "${formatAutomationMoment(record.finishedAtMillis)} · ${record.origin.displayName()} · ${formatDuration(record.durationMillis)}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row(Modifier.horizontalScroll(rememberScrollState())) {
+                TextButton(onClick = {
+                    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                    clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("PixelPy diagnóstico", automationDiagnosticText(automation)))
+                    android.widget.Toast.makeText(context, "Diagnóstico copiado", android.widget.Toast.LENGTH_SHORT).show()
+                }) { Text("COPIAR DIAGNÓSTICO") }
+                Button(onClick = onRetry, enabled = automation.enabled) { Text("REINTENTAR") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("CERRAR") } },
+    )
+}
+
+internal fun automationDiagnosticText(automation: ScriptAutomation): String = buildString {
+    appendLine("PIXELPY AUTOMATION")
+    appendLine("Nombre: ${automation.name}")
+    appendLine("Script: ${automation.projectPath}/${automation.scriptPath}")
+    appendLine("Estado: ${automation.lastStatus.displayName()}")
+    automation.runHistory.lastOrNull()?.let { record ->
+        appendLine("Origen: ${record.origin.displayName()}")
+        appendLine("Fecha: ${formatAutomationMoment(record.finishedAtMillis)}")
+        appendLine("Duración: ${formatDuration(record.durationMillis)}")
+        if (record.generatedFiles.isNotEmpty()) appendLine("Archivos: ${record.generatedFiles.joinToString()}")
+    }
+    append("Diagnóstico: ${automation.summary.ifBlank { "Sin información" }}")
+}
+
+private fun AutomationRunOrigin.displayName(): String = when (this) {
+    AutomationRunOrigin.Scheduled -> "Programada"
+    AutomationRunOrigin.App -> "Desde la app"
+    AutomationRunOrigin.Widget -> "Desde el widget"
+    AutomationRunOrigin.EditorTest -> "Prueba del editor"
+}
+
+private fun formatAutomationMoment(millis: Long): String = Instant.ofEpochMilli(millis)
+    .atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss"))
+
+private fun formatDuration(millis: Long): String = if (millis < 1_000) "${millis} ms" else "%.1f s".format(millis / 1_000.0)
 
 @Composable
 private fun AutomationPanel(
