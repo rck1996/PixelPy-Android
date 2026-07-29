@@ -14,7 +14,7 @@ El widget nunca abre directamente el archivo que está escribiendo el script.
 
 ## Ejecuciones normales
 
-La consola muestra cada archivo creado o actualizado por la ejecución con tres acciones:
+La consola reúne los archivos creados o actualizados en una galería horizontal, manteniendo visibles la salida y las acciones principales. Cada resultado ofrece:
 
 - **VER RESULTADO:** abre la misma vista previa integrada.
 - **GUARDAR:** exporta una copia mediante el selector de Android.

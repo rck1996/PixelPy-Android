@@ -15,7 +15,7 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 - Automatizaciones únicas, diarias o semanales mediante WorkManager, con restricciones de red, carga y batería.
 - Publicación segura de resultados y widget para consultar el estado, ejecutar el script y ver el último archivo generado.
 - Visor integrado para texto, Markdown, XML, JSON, CSV e imágenes, con compartir y apertura externa para otros formatos.
-- Los archivos generados por una ejecución normal pueden abrirse en el mismo visor directamente desde la consola.
+- Los archivos generados por una ejecución normal aparecen en una galería horizontal y pueden abrirse en el mismo visor directamente desde la consola.
 - Diagnóstico de automatizaciones con historial local, causa visible en el widget, reintento y copia del reporte.
 - Interfaz neobrutalista optimizada para teclado móvil.
 
