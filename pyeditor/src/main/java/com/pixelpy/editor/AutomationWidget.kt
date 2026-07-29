@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
-import android.content.ClipData
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -36,8 +35,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.FileProvider
-import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -63,6 +60,7 @@ internal data class AutomationWidgetState(
     val status: AutomationWidgetStatus,
     val updated: String,
     val artifactName: String,
+    val artifactMeta: String,
     val sectionLabel: String,
     val canOpen: Boolean,
     val canRun: Boolean,
@@ -75,6 +73,7 @@ internal fun automationWidgetState(automation: ScriptAutomation?): AutomationWid
             status = AutomationWidgetStatus.Unavailable,
             updated = "Abre PixelPy para configurarla",
             artifactName = "Sin resultado",
+            artifactMeta = "La automatización fue eliminada o no está disponible",
             sectionLabel = "ESTADO",
             canOpen = false,
             canRun = false,
@@ -101,6 +100,12 @@ internal fun automationWidgetState(automation: ScriptAutomation?): AutomationWid
         sectionLabel = if (status == AutomationWidgetStatus.Error) "ERROR · TOCA PARA VER" else "ÚLTIMO RESULTADO",
         artifactName = if (status == AutomationWidgetStatus.Error) compactWidgetSummary(automation.summary)
             else automation.publishedArtifactPath?.substringAfterLast('/') ?: "Sin resultado publicado",
+        artifactMeta = when {
+            status == AutomationWidgetStatus.Error -> "Toca la tarjeta para ver el diagnóstico"
+            automation.publishedSizeBytes != null -> "${humanFileSize(automation.publishedSizeBytes)} · copia segura"
+            automation.highlightedResultPath.isNullOrBlank() -> "EJECUTAR funciona sin archivo destacado"
+            else -> "Se publicará después de una ejecución correcta"
+        },
         canOpen = automation.publishedArtifactPath != null,
         canRun = true,
     )
@@ -156,13 +161,11 @@ class AutomationWidgetProvider : AppWidgetProvider() {
                     Toast.makeText(context, "La ejecución ya está solicitada o la automatización está pausada", Toast.LENGTH_SHORT).show()
                 }
             }
-            ACTION_OPEN -> openPublishedArtifact(context, automationId)
         }
     }
 
     companion object {
         internal const val ACTION_RUN = "com.pixelpy.editor.action.RUN_AUTOMATION"
-        internal const val ACTION_OPEN = "com.pixelpy.editor.action.OPEN_AUTOMATION_RESULT"
 
         internal fun updateForAutomation(context: Context, automationId: String) {
             val manager = AppWidgetManager.getInstance(context)
@@ -187,11 +190,12 @@ class AutomationWidgetProvider : AppWidgetProvider() {
                 setTextViewText(R.id.widget_status, state.status.label)
                 setTextViewText(R.id.widget_updated, state.updated)
                 setTextViewText(R.id.widget_artifact, state.artifactName)
+                setTextViewText(R.id.widget_artifact_meta, state.artifactMeta)
                 setInt(R.id.widget_status, "setBackgroundResource", state.status.backgroundRes)
                 setTextViewText(R.id.widget_section_label, state.sectionLabel)
                 setTextColor(R.id.widget_open, if (state.canOpen) 0xFF191919.toInt() else 0xFF9A9489.toInt())
                 if (id != null) {
-                    setOnClickPendingIntent(R.id.widget_open, actionIntent(context, widgetId, id, ACTION_OPEN, 1))
+                    setOnClickPendingIntent(R.id.widget_open, resultIntent(context, widgetId, id, state.canOpen))
                     setOnClickPendingIntent(R.id.widget_run, actionIntent(context, widgetId, id, ACTION_RUN, 2))
                     setOnClickPendingIntent(R.id.widget_root, detailsIntent(context, widgetId, id))
                 }
@@ -216,6 +220,27 @@ class AutomationWidgetProvider : AppWidgetProvider() {
             return PendingIntent.getBroadcast(context, widgetId * 10 + actionCode, intent, widgetPendingIntentFlags())
         }
 
+        private fun resultIntent(
+            context: Context,
+            widgetId: Int,
+            automationId: String,
+            hasResult: Boolean,
+        ): PendingIntent {
+            val intent = Intent(
+                context,
+                if (hasResult) PublishedResultActivity::class.java else MainActivity::class.java,
+            ).apply {
+                putExtra(EXTRA_AUTOMATION_ID, automationId)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            return PendingIntent.getActivity(
+                context,
+                widgetId * 10 + 1,
+                intent,
+                widgetPendingIntentFlags(),
+            )
+        }
+
         private fun detailsIntent(context: Context, widgetId: Int, automationId: String): PendingIntent {
             val intent = Intent(context, MainActivity::class.java).apply {
                 putExtra(EXTRA_AUTOMATION_ID, automationId)
@@ -232,33 +257,10 @@ class AutomationWidgetProvider : AppWidgetProvider() {
 }
 
 internal fun openPublishedArtifact(context: Context, automationId: String) {
-    val app = context.applicationContext as? PixelPyApp ?: return
-    val automation = app.automationRepository.get(automationId)
-    val relative = automation?.publishedArtifactPath
-    val file = relative?.let {
-        runCatching { AutomationPathValidator.resolvePublished(context.filesDir, it) }.getOrNull()
-    }
-    if (automation == null || file == null || !file.isFile) {
-        context.startActivity(Intent(context, MainActivity::class.java).apply {
-            putExtra(EXTRA_AUTOMATION_ID, automationId)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        })
-        return
-    }
-
-    val uri = FileProvider.getUriForFile(context, "com.pixelpy.editor.files", file)
-    val view = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, automation.publishedMimeType ?: mimeTypeForFile(file))
-        clipData = ClipData.newRawUri(file.name, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    runCatching {
-        context.startActivity(Intent.createChooser(view, "Abrir ${file.name}").apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        })
-    }.onFailure {
-        Toast.makeText(context, "No hay una app compatible para abrir ${file.name}", Toast.LENGTH_LONG).show()
-    }
+    context.startActivity(Intent(context, PublishedResultActivity::class.java).apply {
+        putExtra(EXTRA_AUTOMATION_ID, automationId)
+        if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    })
 }
 
 class AutomationWidgetConfigActivity : ComponentActivity() {
