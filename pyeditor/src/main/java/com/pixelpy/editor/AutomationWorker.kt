@@ -47,23 +47,36 @@ class AutomationWorker(
             val source = withContext(Dispatchers.IO) { paths.script.readText(Charsets.UTF_8) }
             val execution = withContext(Dispatchers.Default) {
                 PythonRuntimeCoordinator.runExclusive {
-                    val value = Python.getInstance().getModule("runner").callAttr(
-                        "execute",
-                        source,
-                        "",
-                        paths.project.absolutePath,
-                        bridge,
-                        automation.timeoutSeconds,
-                        false,
-                        paths.script.name,
-                    )
-                    PythonAutomationResult(
-                        ok = value.callAttr("get", "ok").toBoolean(),
-                        output = value.callAttr("get", "output").toString(),
-                        errorType = value.callAttr("get", "error_type").toString(),
-                        errorMessage = value.callAttr("get", "error_message").toString(),
-                        files = value.callAttr("get", "files").asList().map { it.toString() },
-                    )
+                    val python = Python.getInstance()
+                    val environment = requireNotNull(python.getModule("os").get("environ"))
+                    val previous = automation.parameters.mapValues { (key, _) ->
+                        if (environment.callAttr("__contains__", key).toBoolean()) environment.callAttr("get", key).toString() else null
+                    }
+                    try {
+                        automation.parameters.forEach { (key, value) -> environment.callAttr("__setitem__", key, value) }
+                        val value = python.getModule("runner").callAttr(
+                            "execute",
+                            source,
+                            "",
+                            paths.project.absolutePath,
+                            bridge,
+                            automation.timeoutSeconds,
+                            false,
+                            paths.script.name,
+                        )
+                        PythonAutomationResult(
+                            ok = value.callAttr("get", "ok").toBoolean(),
+                            output = value.callAttr("get", "output").toString(),
+                            errorType = value.callAttr("get", "error_type").toString(),
+                            errorMessage = value.callAttr("get", "error_message").toString(),
+                            files = value.callAttr("get", "files").asList().map { it.toString() },
+                        )
+                    } finally {
+                        previous.forEach { (key, value) ->
+                            if (value == null) environment.callAttr("pop", key, null)
+                            else environment.callAttr("__setitem__", key, value)
+                        }
+                    }
                 }
             }
             val generatedFiles = withContext(Dispatchers.IO) {
@@ -130,6 +143,9 @@ class AutomationWorker(
         } finally {
             bridge.cancel()
             AutomationWidgetProvider.updateForAutomation(applicationContext, id)
+            repository.get(id)?.takeIf { it.lastStatus != AutomationRunStatus.Running }?.let {
+                AutomationNotifications.show(applicationContext, it)
+            }
         }
     }
 

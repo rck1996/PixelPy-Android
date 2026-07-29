@@ -406,6 +406,9 @@ private fun AutomationEditorDialog(
     var battery by remember(initial.id) { mutableStateOf(initial.requiresBatteryNotLow) }
     var timeout by remember(initial.id) { mutableStateOf(initial.timeoutSeconds.toString()) }
     var resultPath by remember(initial.id) { mutableStateOf(initial.highlightedResultPath.orEmpty()) }
+    var parametersText by remember(initial.id) {
+        mutableStateOf(initial.parameters.entries.joinToString("\n") { "${it.key}=${it.value}" })
+    }
     var error by remember { mutableStateOf("") }
     val selectedProject = projects.firstOrNull {
         runCatching { it.canonicalFile.relativeTo(projectsRoot.canonicalFile).invariantSeparatorsPath == projectPath }.getOrDefault(false)
@@ -469,6 +472,15 @@ private fun AutomationEditorDialog(
                 AutomationSwitch("Esperar si la batería está baja", battery) { battery = it }
                 OutlinedTextField(timeout, { timeout = it.filter(Char::isDigit) }, Modifier.fillMaxWidth(), label = { Text("Timeout (5–120 segundos)") }, singleLine = true)
                 OutlinedTextField(resultPath, { resultPath = it }, Modifier.fillMaxWidth(), label = { Text("Resultado destacado opcional") }, supportingText = { Text("Ruta relativa, por ejemplo reporte.xlsx") }, singleLine = true)
+                OutlinedTextField(
+                    parametersText,
+                    { parametersText = it },
+                    Modifier.fillMaxWidth(),
+                    label = { Text("Parámetros guardados") },
+                    supportingText = { Text("Uno por línea: CIUDAD=Santiago. En Python usa os.getenv(\"CIUDAD\").") },
+                    minLines = 2,
+                    maxLines = 5,
+                )
                 if (resultCandidates.isNotEmpty()) {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         resultCandidates.forEach { file ->
@@ -492,6 +504,11 @@ private fun AutomationEditorDialog(
                     val limit = timeout.toIntOrNull() ?: MAX_AUTOMATION_TIMEOUT_SECONDS
                     require(limit in 5..MAX_AUTOMATION_TIMEOUT_SECONDS) { "El timeout debe estar entre 5 y 120 segundos" }
                     require(type != AutomationScheduleType.Weekly || weeklyDays.isNotEmpty()) { "Selecciona al menos un día" }
+                    val parameters = parametersText.lineSequence().filter(String::isNotBlank).associate { line ->
+                        val key = line.substringBefore('=').trim()
+                        require('=' in line && key.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "Parámetro inválido: $line" }
+                        key to line.substringAfter('=')
+                    }
                     initial.copy(
                         name = name.trim(),
                         projectPath = projectPath,
@@ -506,6 +523,7 @@ private fun AutomationEditorDialog(
                         requiresBatteryNotLow = battery,
                         timeoutSeconds = limit,
                         highlightedResultPath = resultPath.trim().takeIf(String::isNotBlank),
+                        parameters = parameters,
                     )
                 }.onSuccess(onSave).onFailure { error = it.message ?: "Datos inválidos" }
             }, modifier = Modifier.testTag("automation-save")) { Text("GUARDAR") }

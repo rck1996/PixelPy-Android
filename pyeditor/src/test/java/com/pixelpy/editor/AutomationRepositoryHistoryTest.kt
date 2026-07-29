@@ -28,6 +28,7 @@ class AutomationRepositoryHistoryTest {
                 projectPath = "Demo",
                 scriptPath = "main.py",
                 scheduleType = AutomationScheduleType.Daily,
+                parameters = mapOf("CIUDAD" to "Santiago", "LIMITE" to "25"),
                 runHistory = history,
             )
         )
@@ -37,6 +38,7 @@ class AutomationRepositoryHistoryTest {
         assertEquals(MAX_AUTOMATION_HISTORY, restored.runHistory.size)
         assertEquals("run 3", restored.runHistory.first().summary)
         assertEquals(AutomationRunOrigin.Widget, restored.runHistory.last().origin)
+        assertEquals("Santiago", restored.parameters["CIUDAD"])
         assertTrue(restored.runHistory.flatMap { it.generatedFiles }.none { it.startsWith('/') || it.contains(":\\") })
     }
 }

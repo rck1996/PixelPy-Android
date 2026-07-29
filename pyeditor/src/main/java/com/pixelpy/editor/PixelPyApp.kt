@@ -29,6 +29,7 @@ class PixelPyApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        AutomationNotifications.createChannel(this)
         if (!Python.isStarted()) Python.start(AndroidPlatform(this))
     }
 }

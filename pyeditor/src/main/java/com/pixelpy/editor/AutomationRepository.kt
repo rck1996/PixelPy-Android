@@ -26,6 +26,9 @@ internal class AutomationRepository(filesDir: File) {
                 ?.trim()
                 ?.replace('\\', '/')
                 ?.takeIf { it.isNotBlank() },
+            parameters = automation.parameters.entries.take(20).associate { (key, value) ->
+                key.trim() to value.take(1_000)
+            }.filterKeys { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) },
             timeoutSeconds = automation.timeoutSeconds.coerceIn(5, MAX_AUTOMATION_TIMEOUT_SECONDS),
             summary = automation.summary.limitedAutomationSummary(),
             runHistory = automation.runHistory.takeLast(MAX_AUTOMATION_HISTORY).map { record ->
@@ -101,6 +104,7 @@ private fun ScriptAutomation.toJson(): JSONObject = JSONObject()
     .put("timeoutSeconds", timeoutSeconds)
     .put("enabled", enabled)
     .putNullable("highlightedResultPath", highlightedResultPath)
+    .put("parameters", JSONObject(parameters))
     .put("lastStatus", lastStatus.name)
     .putNullable("lastRunAtMillis", lastRunAtMillis)
     .putNullable("nextRunAtMillis", nextRunAtMillis)
@@ -140,6 +144,9 @@ private fun JSONObject.toAutomation(): ScriptAutomation {
         timeoutSeconds = optInt("timeoutSeconds", MAX_AUTOMATION_TIMEOUT_SECONDS),
         enabled = optBoolean("enabled", true),
         highlightedResultPath = nullableString("highlightedResultPath"),
+        parameters = optJSONObject("parameters")?.let { parameters ->
+            parameters.keys().asSequence().associateWith { parameters.optString(it) }
+        }.orEmpty(),
         lastStatus = runCatching {
             enumValueOf<AutomationRunStatus>(optString("lastStatus", AutomationRunStatus.Pending.name))
         }.getOrDefault(AutomationRunStatus.Pending),
