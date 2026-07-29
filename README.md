@@ -89,7 +89,7 @@ El APK se genera en `pyeditor/build/outputs/apk/development/debug/`.
 
 ## Versión
 
-La versión estable actual es `1.4.0`. El modo Notebook se desarrolla por separado para poder probarlo en el teléfono antes de publicarlo.
+La versión estable actual es `1.5.0`, con el primer modo Notebook local integrado.
 
 Las ejecuciones programadas son aproximadas: Android puede retrasarlas por batería, Doze o restricciones del sistema.
 
