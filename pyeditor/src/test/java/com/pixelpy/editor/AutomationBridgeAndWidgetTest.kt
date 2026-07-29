@@ -112,6 +112,31 @@ class AutomationBridgeAndWidgetTest {
     }
 
     @Test
+    fun csvPreviewSupportsQuotedCommasAndRows() {
+        val table = parseCsvPreview(
+            "nombre,detalle,valor\r\nA,\"texto, con coma\",10\r\nB,normal,20\r\n"
+        )
+
+        assertEquals(listOf("nombre", "detalle", "valor"), table.headers)
+        assertEquals(2, table.rows.size)
+        assertEquals("texto, con coma", table.rows.first()[1])
+    }
+
+    @Test
+    fun jsonPreviewKeepsNestedObjectsArraysAndTypes() {
+        val root = parseJsonPreview(
+            """{"ok":true,"items":[1,{"name":"PixelPy"}],"empty":null}"""
+        ) as JsonPreviewNode.ObjectNode
+
+        assertTrue(root.values.any { it.first == "ok" && it.second is JsonPreviewNode.ValueNode })
+        val items = root.values.first { it.first == "items" }.second as JsonPreviewNode.ArrayNode
+        assertEquals(2, items.values.size)
+        assertTrue(items.values[1] is JsonPreviewNode.ObjectNode)
+        val empty = root.values.first { it.first == "empty" }.second as JsonPreviewNode.ValueNode
+        assertEquals(JsonValueType.Null, empty.type)
+    }
+
+    @Test
     fun widgetShowsPublishedFileSizeAndSafeCopy() {
         val state = automationWidgetState(
             sample(AutomationRunStatus.Success).copy(

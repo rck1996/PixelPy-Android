@@ -37,8 +37,8 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 El botón **VER RESULTADO** del widget, **ABRIR RESULTADO** en automatizaciones y **VER RESULTADO** en la consola llevan al mismo visor:
 
 - TXT, LOG, Markdown y XML se muestran como texto.
-- JSON se presenta indentado cuando su contenido es válido.
-- CSV tiene una vista previa monoespaciada de hasta 200 líneas.
+- JSON se presenta como un árbol interactivo con objetos y listas plegables.
+- CSV se muestra como tabla con encabezados, filas alternadas y desplazamiento horizontal.
 - PNG, JPG, JPEG y WebP se muestran dentro de PixelPy.
 - PDF, Excel, ZIP y formatos desconocidos muestran sus datos y ofrecen **OTRA APP**.
 - Todos los formatos pueden compartirse desde el visor.

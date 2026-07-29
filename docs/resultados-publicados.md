@@ -27,8 +27,8 @@ En este caso PixelPy abre el archivo actual del proyecto. La copia estable en `p
 | Formato | Comportamiento |
 | --- | --- |
 | TXT, LOG, Markdown, XML | Vista de texto monoespaciada |
-| JSON | Vista indentada cuando el JSON es válido |
-| CSV | Primeras 200 líneas |
+| JSON | Árbol interactivo con objetos y listas plegables y tipos diferenciados por color |
+| CSV | Tabla con encabezados, filas alternadas y hasta 200 registros |
 | PNG, JPG, JPEG, WebP | Vista de imagen |
 | PDF, XLS, XLSX, ZIP y otros | Información del archivo y apertura con otra aplicación |
 
