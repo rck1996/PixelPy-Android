@@ -15,6 +15,7 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 - Automatizaciones únicas, diarias o semanales mediante WorkManager, con restricciones de red, carga y batería.
 - Publicación segura de resultados y widget para consultar el estado, ejecutar el script y ver el último archivo generado.
 - Visor integrado para texto, Markdown, XML, JSON, CSV e imágenes, con compartir y apertura externa para otros formatos.
+- Los archivos generados por una ejecución normal pueden abrirse en el mismo visor directamente desde la consola.
 - Diagnóstico de automatizaciones con historial local, causa visible en el widget, reintento y copia del reporte.
 - Interfaz neobrutalista optimizada para teclado móvil.
 
@@ -33,7 +34,7 @@ Editor y entorno de ejecución de Python para Android, diseñado para trabajar d
 
 ## Resultados publicados
 
-El botón **VER RESULTADO** del widget y **ABRIR RESULTADO** dentro de PixelPy llevan al mismo visor seguro:
+El botón **VER RESULTADO** del widget, **ABRIR RESULTADO** en automatizaciones y **VER RESULTADO** en la consola llevan al mismo visor:
 
 - TXT, LOG, Markdown y XML se muestran como texto.
 - JSON se presenta indentado cuando su contenido es válido.
@@ -43,6 +44,8 @@ El botón **VER RESULTADO** del widget y **ABRIR RESULTADO** dentro de PixelPy l
 - Todos los formatos pueden compartirse desde el visor.
 
 La vista previa textual está limitada a 1 MB para evitar bloqueos. El visor siempre usa la copia publicada en el almacenamiento privado de PixelPy, no el archivo que el script podría estar modificando.
+
+En la consola normal se abre el archivo generado dentro del proyecto. En automatizaciones y widgets se abre una copia publicada estable.
 
 Consulta el flujo completo y la resolución de problemas en [Resultados publicados y widget](docs/resultados-publicados.md).
 

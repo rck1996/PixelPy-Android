@@ -59,6 +59,7 @@ private val ResultBlue = Color(0xFF79D8FF)
 private const val MAX_PREVIEW_BYTES = 1_000_000
 
 internal enum class PublishedPreviewKind { Text, Json, Csv, Image, External }
+internal const val EXTRA_PROJECT_RESULT_PATH = "com.pixelpy.editor.extra.PROJECT_RESULT_PATH"
 
 internal fun previewKind(file: File): PublishedPreviewKind = when (file.extension.lowercase()) {
     "txt", "log", "md", "xml" -> PublishedPreviewKind.Text
@@ -87,16 +88,23 @@ class PublishedResultActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val automationId = intent.getStringExtra(EXTRA_AUTOMATION_ID)
+        val projectResultPath = intent.getStringExtra(EXTRA_PROJECT_RESULT_PATH)
         val app = application as PixelPyApp
         val automation = automationId?.let(app.automationRepository::get)
-        val file = automation?.publishedArtifactPath?.let {
-            runCatching { AutomationPathValidator.resolvePublished(filesDir, it) }.getOrNull()
+        val file = when {
+            automation?.publishedArtifactPath != null -> runCatching {
+                AutomationPathValidator.resolvePublished(filesDir, automation.publishedArtifactPath)
+            }.getOrNull()
+            projectResultPath != null -> runCatching {
+                AutomationPathValidator.resolveProjectResult(filesDir, projectResultPath)
+            }.getOrNull()
+            else -> null
         }?.takeIf(File::isFile)
 
         setContent {
             MaterialTheme(lightColorScheme(primary = ResultInk, background = ResultPaper, surface = ResultPaper)) {
                 PublishedResultScreen(
-                    automationName = automation?.name ?: "Resultado",
+                    automationName = automation?.name ?: "Ejecución actual",
                     file = file,
                     mimeType = automation?.publishedMimeType,
                     onBack = ::finish,

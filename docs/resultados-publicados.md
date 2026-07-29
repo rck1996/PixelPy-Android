@@ -12,6 +12,16 @@ PixelPy separa el archivo de trabajo del resultado publicado. Al terminar correc
 
 El widget nunca abre directamente el archivo que está escribiendo el script.
 
+## Ejecuciones normales
+
+La consola muestra cada archivo creado o actualizado por la ejecución con tres acciones:
+
+- **VER RESULTADO:** abre la misma vista previa integrada.
+- **GUARDAR:** exporta una copia mediante el selector de Android.
+- **COMPARTIR:** entrega el archivo a otra aplicación.
+
+En este caso PixelPy abre el archivo actual del proyecto. La copia estable en `published/` se reserva para automatizaciones y widgets.
+
 ## Vista previa
 
 | Formato | Comportamiento |

@@ -43,6 +43,9 @@ internal object AutomationPathValidator {
     fun resolvePublished(filesDir: File, relativePath: String): File =
         resolveInside(File(filesDir, "published").canonicalFile, relativePath.removePrefix("published/"), "resultado publicado")
 
+    fun resolveProjectResult(filesDir: File, relativePath: String): File =
+        resolveInside(File(filesDir, "projects").canonicalFile, relativePath.removePrefix("projects/"), "resultado del proyecto")
+
     private fun resolveInside(root: File, relative: String, label: String): File {
         val clean = relative.trim().replace('\\', '/')
         if (clean.isBlank() || clean.startsWith('/') || Regex("^[A-Za-z]:").containsMatchIn(clean)) {

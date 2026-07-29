@@ -1,11 +1,29 @@
 package com.pixelpy.editor
 
+import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class AutomationPathValidatorTest {
+    @Test
+    fun projectResultStaysInsideProjectsRoot() {
+        val filesDir = createTempDir(prefix = "pixelpy-files-")
+        val result = File(filesDir, "projects/Demo/report.json").apply {
+            parentFile!!.mkdirs()
+            writeText("{}")
+        }
+
+        assertEquals(
+            result.canonicalFile,
+            AutomationPathValidator.resolveProjectResult(filesDir, "projects/Demo/report.json"),
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            AutomationPathValidator.resolveProjectResult(filesDir, "projects/../secret.txt")
+        }
+    }
+
     @Test
     fun acceptsExistingProjectScriptAndResult() {
         val root = Files.createTempDirectory("pixelpy-paths").toFile()
